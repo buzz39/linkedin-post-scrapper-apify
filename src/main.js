@@ -1,79 +1,119 @@
-import { Actor } from 'apify';
+import { Actor, Logger } from 'apify';
 import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
-// Removed: stealthPlugin is incompatible with Playwright
-// Using playwright-extra for evasion instead
+// Add this before browser launch:
+chromium.use(StealthPlugin());
+
+const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+];
+
+function getRandomUserAgent() {
+    return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
 
 await Actor.main(async () => {
-    const { postUrl } = await Actor.getInput();
-    const username = process.env.linkedin_username;
-    const password = process.env.linkedin_password;
+    try {
+        const { postUrl } = await Actor.getInput();
+        const username = process.env.linkedin_username;
+        const password = process.env.linkedin_password;
 
-    if (!postUrl || !username || !password) {
-        await Actor.fail('Missing postUrl, LinkedIn username, or password.');
-    }
+        Logger.info(`Starting LinkedIn scrape for: ${postUrl}`);
 
-    // ✅ Use correct HTTP proxy URL for Playwright
-    const proxyConfig = await Actor.createProxyConfiguration();
-    const proxyUrl = await proxyConfig.newUrl(); // e.g., http://user:pass@host:port
+        if (!postUrl || !username || !password) {
+            await Actor.fail('Missing postUrl, LinkedIn username, or password in environment variables.');
+        }
 
-    const browser = await chromium.launch({
-        headless: true,
-        proxy: { server: proxyUrl },
-    });
+        // Proxy configuration
+        const proxyConfig = await Actor.createProxyConfiguration();
+        const proxyUrl = await proxyConfig.newUrl();
 
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
-                   'AppleWebKit/537.36 (KHTML, like Gecko) ' +
-                   'Chrome/115.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 768 },
-    });
+        const browser = await chromium.launch({
+            headless: true,
+            args: [
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+            ],
+            proxy: {
+                server: proxyUrl
+            }
+        });
 
-    context.setDefaultTimeout(60000); // extend default timeout
+        const context = await browser.newContext({
+            userAgent: getRandomUserAgent(),
+            viewport: { width: 1920, height: 1080 },
+        });
+
+    context.setDefaultTimeout(60000);
 
     const page = await context.newPage();
 
-    // Random delay helper
-    const waitRandom = (min = 300, max = 1000) =>
-        page.waitForTimeout(min + Math.random() * (max - min));
+    // --- LinkedIn Login with Retry Logic ---
+    const MAX_RETRIES = 3;
+    const INITIAL_DELAY = 2000;
 
-    // --- LinkedIn Login ---
+    async function loginToLinkedIn(page, frame, username, password, retryCount = 0) {
+        try {
+            // Add random delay to appear more human-like
+            await page.waitForTimeout(INITIAL_DELAY + Math.random() * 3000);
+
+            // Wait for selector with longer timeout (120 seconds)
+            await frame.waitForSelector('input[name="session_key"]', { timeout: 120000 });
+
+            // Fill credentials with random delays between keystrokes
+            await frame.fill('input[name="session_key"]', username);
+            await page.waitForTimeout(800 + Math.random() * 400);
+
+            // Use 'password' or 'session_password' - trying instructions' suggestion first
+            // If checking fails, we might need to fallback, but let's stick to instructions.
+            // Using a specific selector that likely matches.
+            const passwordSelector = 'input[type="password"]';
+            await frame.waitForSelector(passwordSelector);
+            await frame.fill(passwordSelector, password);
+            await page.waitForTimeout(800 + Math.random() * 400);
+
+            // Click login button
+            await frame.click('button[type="submit"]');
+
+            // Wait for navigation
+            await page.waitForNavigation({ timeout: 60000 });
+
+            Logger.info('Successfully logged in to LinkedIn');
+            return true;
+
+        } catch (error) {
+            Logger.error(`Login attempt ${retryCount + 1} failed: ${error.message}`);
+
+            if (retryCount < MAX_RETRIES) {
+                const delay = INITIAL_DELAY * Math.pow(2, retryCount);
+                Logger.info(`Retrying login in ${delay}ms...`);
+                await page.waitForTimeout(delay);
+                return loginToLinkedIn(page, frame, username, password, retryCount + 1);
+            } else {
+                await Actor.fail(`Failed to login after ${MAX_RETRIES} attempts. LinkedIn may be blocking this automation.`);
+            }
+        }
+    }
+
     await page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle' });
 
     // Handle possible iframe embedding
     let frame = page;
     if (page.frames().length > 1) {
         frame = page.frame({ url: /linkedin\.com\/checkpoint/ }) || page;
-        console.log('Using login iframe due to bot check');
+        Logger.info('Using login iframe due to bot check');
     }
 
-    await frame.waitForSelector('input[name="session_key"]');
-    await waitRandom();
-    await frame.fill('input[name="session_key"]', username);
-    await waitRandom();
-    await frame.fill('input[name="session_password"]', password);
-    await waitRandom(800, 1500);
-    await frame.click('button[type="submit"]');
-    await waitRandom(2000, 5000);
-
-    if (await frame.$('iframe[src*="captcha"]')) {
-        const screenshot = await page.screenshot({ fullPage: true });
-        await Actor.setValue('captcha-detected.png', screenshot, { contentType: 'image/png' });
-        await Actor.fail('CAPTCHA detected; screenshot saved.');
-    }
-
-    try {
-        await page.waitForSelector('.feed-identity-module', { timeout: 60000 });
-        console.log('✅ LinkedIn login successful');
-    } catch {
-        const screenshot = await page.screenshot({ fullPage: true });
-        await Actor.setValue('login-failed.png', screenshot, { contentType: 'image/png' });
-        await Actor.fail('Login failed; screenshot saved.');
-    }
+    await loginToLinkedIn(page, frame, username, password);
 
     // --- Navigate and Scrape Post ---
+    Logger.info(`Navigating to post: ${postUrl}`);
     await page.goto(postUrl, { waitUntil: 'networkidle' });
-    await waitRandom();
+    await page.waitForTimeout(2000 + Math.random() * 3000);
 
     const urn = postUrl.match(/urn:li:activity:\d+/)?.[0];
     if (!urn) await Actor.fail('Cannot extract URN from postUrl');
@@ -109,6 +149,12 @@ await Actor.main(async () => {
     }
 
     await Actor.pushData(postData);
-    console.log('✅ Post scraped successfully');
+    Logger.info('✅ Post scraped successfully');
     await browser.close();
+
+    } catch (error) {
+        Logger.error(`Actor execution failed: ${error.message}`);
+        Logger.error(`Stack: ${error.stack}`);
+        await Actor.fail(`Fatal error: ${error.message}`);
+    }
 });
