@@ -13,12 +13,10 @@
     "postUrls": {
       "title": "LinkedIn Post URLs (Batch)",
       "type": "array",
-      "editor": "select",
+      "editor": "stringList",
       "description": "Array of LinkedIn URLs to scrape in batch",
-      "items": {
-        "type": "string"
-      }
-    },
+          },
+    
     "includeComments": {
       "title": "Include Comments",
       "type": "boolean",
