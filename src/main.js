@@ -1,6 +1,9 @@
 import { Actor } from 'apify';
 import { chromium } from 'playwright-extra';
 
+// Removed: stealthPlugin is incompatible with Playwright
+// Using playwright-extra for evasion instead
+
 await Actor.main(async () => {
     const { postUrl } = await Actor.getInput();
     const username = process.env.linkedin_username;
