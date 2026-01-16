@@ -1,4 +1,4 @@
-import { Actor, Logger } from 'apify';
+import { Actor, log } from 'apify';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
@@ -21,7 +21,7 @@ await Actor.main(async () => {
         const username = process.env.linkedin_username;
         const password = process.env.linkedin_password;
 
-        Logger.info(`Starting LinkedIn scrape for: ${postUrl}`);
+        log.info(`Starting LinkedIn scrape for: ${postUrl}`);
 
         if (!postUrl || !username || !password) {
             await Actor.fail('Missing postUrl, LinkedIn username, or password in environment variables.');
@@ -82,15 +82,15 @@ await Actor.main(async () => {
             // Wait for navigation
             await page.waitForNavigation({ timeout: 60000 });
 
-            Logger.info('Successfully logged in to LinkedIn');
+            log.info('Successfully logged in to LinkedIn');
             return true;
 
         } catch (error) {
-            Logger.error(`Login attempt ${retryCount + 1} failed: ${error.message}`);
+            log.error(`Login attempt ${retryCount + 1} failed: ${error.message}`);
 
             if (retryCount < MAX_RETRIES) {
                 const delay = INITIAL_DELAY * Math.pow(2, retryCount);
-                Logger.info(`Retrying login in ${delay}ms...`);
+                log.info(`Retrying login in ${delay}ms...`);
                 await page.waitForTimeout(delay);
                 return loginToLinkedIn(page, frame, username, password, retryCount + 1);
             } else {
@@ -105,13 +105,13 @@ await Actor.main(async () => {
     let frame = page;
     if (page.frames().length > 1) {
         frame = page.frame({ url: /linkedin\.com\/checkpoint/ }) || page;
-        Logger.info('Using login iframe due to bot check');
+        log.info('Using login iframe due to bot check');
     }
 
     await loginToLinkedIn(page, frame, username, password);
 
     // --- Navigate and Scrape Post ---
-    Logger.info(`Navigating to post: ${postUrl}`);
+    log.info(`Navigating to post: ${postUrl}`);
     await page.goto(postUrl, { waitUntil: 'networkidle' });
     await page.waitForTimeout(2000 + Math.random() * 3000);
 
@@ -149,12 +149,12 @@ await Actor.main(async () => {
     }
 
     await Actor.pushData(postData);
-    Logger.info('✅ Post scraped successfully');
+    log.info('✅ Post scraped successfully');
     await browser.close();
 
     } catch (error) {
-        Logger.error(`Actor execution failed: ${error.message}`);
-        Logger.error(`Stack: ${error.stack}`);
+        log.error(`Actor execution failed: ${error.message}`);
+        log.error(`Stack: ${error.stack}`);
         await Actor.fail(`Fatal error: ${error.message}`);
     }
 });
