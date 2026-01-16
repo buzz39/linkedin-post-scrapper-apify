@@ -1,17 +1,9 @@
-# Specify the base Docker image. You can read more about
-# the available images at https://crawlee.dev/docs/guides/docker-images
-# You can also use any other image from Docker Hub.
-FROM apify/actor-node-playwright-chrome:22-1.53.2
-
-# Check preinstalled packages
-RUN npm ls crawlee apify puppeteer playwright
+# Specify the base Docker image.
+FROM apify/actor-node:22
 
 # Copy just package.json and package-lock.json
 # to speed up the build using Docker layer cache.
-COPY --chown=myuser package*.json Dockerfile ./
-
-# Check Playwright version is the same as the one from base image.
-RUN node check-playwright-version.mjs
+COPY --chown=myuser package*.json ./
 
 # Install NPM packages, skip optional and development dependencies to
 # keep the image small. Avoid logging too much and print the dependency
@@ -31,6 +23,5 @@ RUN npm --quiet set progress=false \
 # for most source file changes.
 COPY --chown=myuser . ./
 
-# Run the image. If you know you won't need headful browsers,
-# you can remove the XVFB start script for a micro perf gain.
-CMD ./start_xvfb_and_run_cmd.sh && npm start --silent
+# Run the image.
+CMD npm start --silent

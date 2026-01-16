@@ -1,18 +1,36 @@
 {
-    "title": "PlaywrightCrawler Template",
-    "type": "object",
-    "schemaVersion": 1,
-    "properties": {
-        "startUrls": {
-            "title": "Start URLs",
-            "type": "array",
-            "description": "URLs to start with.",
-            "editor": "requestListSources",
-            "prefill": [
-                {
-                    "url": "https://apify.com"
-                }
-            ]
-        }
+  "title": "LinkedIn Post Scraper Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "postUrl": {
+      "title": "LinkedIn Post URL",
+      "type": "string",
+      "description": "Single LinkedIn post/profile URL to scrape",
+      "example": "https://www.linkedin.com/posts/satyanadella_6988234986234-"
+    },
+    "postUrls": {
+      "title": "LinkedIn Post URLs (Batch)",
+      "type": "array",
+      "description": "Array of LinkedIn URLs to scrape in batch",
+      "items": {
+        "type": "string"
+      }
+    },
+    "includeComments": {
+      "title": "Include Comments",
+      "type": "boolean",
+      "description": "Attempt to scrape comments (experimental)",
+      "default": false
+    },
+    "maxRetries": {
+      "title": "Max Retries",
+      "type": "integer",
+      "description": "Number of retry attempts on failure",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 5
     }
+  },
+  "required": []
 }
