@@ -13,6 +13,7 @@
     "postUrls": {
       "title": "LinkedIn Post URLs (Batch)",
       "type": "array",
+      "editor": "editableList",
       "description": "Array of LinkedIn URLs to scrape in batch",
       "items": {
         "type": "string"
