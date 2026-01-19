@@ -1,0 +1,58 @@
+{
+  "title": "LinkedIn Post Data",
+  "type": "object",
+  "properties": {
+    "url": {
+      "type": "string",
+      "title": "Post URL",
+      "description": "The LinkedIn post or profile URL that was scraped"
+    },
+    "success": {
+      "type": "boolean",
+      "title": "Success Status",
+      "description": "Whether the post was successfully scraped"
+    },
+    "data": {
+      "type": "object",
+      "title": "Post Data",
+      "description": "The extracted post data",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Post title from Open Graph meta tag"
+        },
+        "description": {
+          "type": "string",
+          "description": "Post description or content"
+        },
+        "image": {
+          "type": "string",
+          "description": "Post image URL from Open Graph"
+        },
+        "url": {
+          "type": "string",
+          "description": "Canonical URL of the post"
+        },
+        "type": {
+          "type": "string",
+          "description": "Open Graph type (e.g., 'website', 'article')"
+        },
+        "structured": {
+          "type": "object",
+          "description": "Structured data from JSON-LD if available"
+        }
+      }
+    },
+    "error": {
+      "type": "string",
+      "title": "Error Message",
+      "description": "Error message if scraping failed"
+    },
+    "fetchedAt": {
+      "type": "string",
+      "title": "Fetch Timestamp",
+      "description": "ISO 8601 timestamp of when the data was fetched"
+    }
+  },
+  "required": ["url", "success", "fetchedAt"]
+}
