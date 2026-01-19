@@ -14,6 +14,7 @@
       "title": "LinkedIn Post URLs (Batch)",
       "type": "array",
       "editor": "stringList",
+          "items": { "type": "string" },
       "description": "Array of LinkedIn URLs to scrape in batch",
           },
     
