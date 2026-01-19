@@ -1,67 +1,98 @@
-## PlaywrightCrawler template
+# LinkedIn Post Scraper
 
-This template is a production-ready boilerplate for developing an [Actor](https://apify.com/actors) with `PlaywrightCrawler`. Use this to bootstrap your projects using the most up-to-date code.
+A powerful and reliable Apify Actor for scraping LinkedIn posts and profiles. Extract post content, author information, engagement metrics, and more without requiring authentication.
 
-> We decided to split Apify SDK into two libraries, Crawlee and Apify SDK v3. Crawlee will retain all the crawling and scraping-related tools and will always strive to be the best [web scraping](https://apify.com/web-scraping) library for its community. At the same time, Apify SDK will continue to exist, but keep only the Apify-specific features related to building Actors on the Apify platform. Read the upgrading guide to learn about the changes.
+## Features
 
-## Resources
+- **No Login Required**: Scrapes public LinkedIn posts using public API endpoints
+- **Batch Processing**: Process multiple URLs in a single run
+- **Structured Data Extraction**: Extracts titles, descriptions, images, and Open Graph metadata
+- **JSON-LD Support**: Parses structured data when available
+- **Error Handling**: Graceful error handling with retry logic
+- **Rate Limiting**: Built-in rate limiting to avoid IP blocks
+- **Fast & Reliable**: Optimized for speed and reliability
 
-If you're looking for examples or want to learn more visit:
+## Use Cases
 
-- [Crawlee + Apify Platform guide](https://crawlee.dev/docs/guides/apify-platform)
-- [Documentation](https://crawlee.dev/api/playwright-crawler/class/PlaywrightCrawler) and [examples](https://crawlee.dev/docs/examples/playwright-crawler)
-- [Node.js tutorials](https://docs.apify.com/academy/node-js) in Academy
-- [Scraping single-page applications with Playwright](https://blog.apify.com/scraping-single-page-applications-with-playwright/)
-- [How to scale Puppeteer and Playwright](https://blog.apify.com/how-to-scale-puppeteer-and-playwright/)
-- [Integration with Zapier](https://apify.com/integrations), Make, GitHub, Google Drive and other apps
-- [Video guide on getting data using Apify API](https://www.youtube.com/watch?v=ViYYDHSBAKM)
-- A short guide on how to create Actors using code templates:
+- **Market Research**: Analyze competitor LinkedIn activity
+- **Content Monitoring**: Track brand mentions and posts
+- **Lead Generation**: Extract author information from posts
+- **Data Analysis**: Collect LinkedIn data for analysis
+- **Competitive Intelligence**: Monitor industry trends
 
-[web scraper template](https://www.youtube.com/watch?v=u-i-Korzf8w)
+## How to Use
 
+### Input Schema
 
-## Getting started
+The Actor accepts the following input:
 
-For complete information [see this article](https://docs.apify.com/platform/actors/development#build-actor-at-apify-console). In short, you will:
+```json
+{
+  "postUrl": "https://www.linkedin.com/posts/username_postid-",
+  "postUrls": [
+    "https://www.linkedin.com/posts/user1_postid1-",
+    "https://www.linkedin.com/posts/user2_postid2-"
+  ]
+}
+```
 
-1. Build the Actor
-2. Run the Actor
+### Input Parameters
 
-## Pull the Actor for local development
+- **postUrl** (string, optional): Single LinkedIn post or profile URL
+- **postUrls** (array, optional): Array of LinkedIn URLs for batch processing
+- **includeComments** (boolean, optional): Attempt to scrape comments (experimental)
+- **maxRetries** (integer, optional): Number of retry attempts (1-5, default: 3)
 
-If you would like to develop locally, you can pull the existing Actor from Apify console using Apify CLI:
+### Output
 
-1. Install `apify-cli`
+The Actor outputs structured data for each post:
 
-    **Using Homebrew**
+```json
+{
+  "url": "https://www.linkedin.com/posts/satyanadella_...",
+  "success": true,
+  "data": {
+    "title": "Post title",
+    "description": "Post content",
+    "image": "https://image-url.jpg",
+    "url": "https://canonical-url",
+    "type": "article",
+    "structured": {}
+  },
+  "fetchedAt": "2024-01-19T22:00:00.000Z"
+}
+```
 
-    ```bash
-    brew install apify-cli
-    ```
+## Error Handling
 
-    **Using NPM**
+- **404 Not Found**: Post URL is invalid or deleted
+- **403 Forbidden**: Access denied, may need proxy
+- **429 Rate Limited**: Too many requests, will retry with backoff
+- **500+ Server Error**: Server issue, will retry automatically
 
-    ```bash
-    npm -g install apify-cli
-    ```
+## Tips & Best Practices
 
-2. Pull the Actor by its unique `<ActorId>`, which is one of the following:
-    - unique name of the Actor to pull (e.g. "apify/hello-world")
-    - or ID of the Actor to pull (e.g. "E2jjCZBezvAZnX8Rb")
+1. **URL Format**: Ensure LinkedIn URLs are in the correct format
+2. **Rate Limiting**: Adjust `LINKEDIN_RATE_LIMIT` environment variable for speed/reliability tradeoff
+3. **Batch Processing**: Use `postUrls` array for processing multiple posts efficiently
+4. **Proxy Support**: Use Apify Proxy for large-scale scraping
+5. **Error Monitoring**: Monitor failed runs in the Apify console
 
-    You can find both by clicking on the Actor title at the top of the page, which will open a modal containing both Actor unique name and Actor ID.
+## Technical Details
 
-    This command will copy the Actor into the current directory on your local machine.
+- **Technology**: Node.js with Axios and Cheerio
+- **Deployment**: Apify Actor with Docker containerization
+- **Requirements**: No authentication needed
+- **Performance**: Optimized for fast execution
 
-    ```bash
-    apify pull <ActorId>
-    ```
+## API Documentation
 
-## Documentation reference
+For complete documentation, visit the [Apify Actor documentation](https://docs.apify.com/platform/actors).
 
-To learn more about Apify and Actors, take a look at the following resources:
+## Support
 
-- [Apify SDK for JavaScript documentation](https://docs.apify.com/sdk/js)
-- [Apify SDK for Python documentation](https://docs.apify.com/sdk/python)
-- [Apify Platform documentation](https://docs.apify.com/platform)
-- [Join our developer community on Discord](https://discord.com/invite/jyEM2PRvMU)
+For issues or feature requests, please visit the [GitHub repository](https://github.com/buzz39/linkedin-post-scrapper-apify).
+
+## License
+
+MIT License - See LICENSE file for details
