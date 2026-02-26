@@ -5,7 +5,7 @@ await Actor.main(async () => {
   try {
     // 1. GET INPUT
     const input = await Actor.getInput() || {};
-    const { postUrl, postUrls } = input;
+    const { postUrl, postUrls, maxRetries } = input;
 
     if (!postUrl && (!postUrls || postUrls.length === 0)) {
       await Actor.fail('Please provide either postUrl or postUrls array');
@@ -21,7 +21,7 @@ await Actor.main(async () => {
       try {
         log.info(`Processing [${i + 1}/${urlsToProcess.length}]: ${url}`);
 
-        const postData = await fetchLinkedInViaAPI(url);
+        const postData = await fetchLinkedInViaAPI(url, { maxRetries });
 
         await Actor.pushData({
           url,

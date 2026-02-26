@@ -25,7 +25,7 @@ export function parseLinkedInHTML(html) {
   if (structuredData) {
     try {
       postData.structured = JSON.parse(structuredData);
-    } catch (e) {
+    } catch {
       // JSON parsing failed, continue without it
     }
   }

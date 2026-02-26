@@ -40,7 +40,6 @@ The Actor accepts the following input:
 
 - **postUrl** (string, optional): Single LinkedIn post or profile URL
 - **postUrls** (array, optional): Array of LinkedIn URLs for batch processing
-- **includeComments** (boolean, optional): Attempt to scrape comments (experimental)
 - **maxRetries** (integer, optional): Number of retry attempts (1-5, default: 3)
 
 ### Output
@@ -64,6 +63,9 @@ The Actor outputs structured data for each post:
 ```
 
 ## Error Handling
+
+`maxRetries` is configurable per run (1-5, default: 3).
+
 
 - **404 Not Found**: Post URL is invalid or deleted
 - **403 Forbidden**: Access denied, may need proxy
