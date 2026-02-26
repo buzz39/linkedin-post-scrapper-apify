@@ -5,14 +5,13 @@
   "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "lint": "eslint ."
   },
   "dependencies": {
     "apify": "^3.5.0",
-    "crawlee": "^3.15.0",
     "axios": "^1.6.0",
-    "cheerio": "^1.0.0-rc.12",
-    "node-cache": "^5.1.2"
+    "cheerio": "^1.0.0-rc.12"
   },
   "devDependencies": {
     "jest": "^29.7.0"

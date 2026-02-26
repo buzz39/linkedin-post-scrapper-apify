@@ -1,6 +1,35 @@
-import prettier from 'eslint-config-prettier';
-
-import apify from '@apify/eslint-config/js.js';
-
-// eslint-disable-next-line import/no-default-export
-export default [{ ignores: ['**/dist'] }, ...apify, prettier];
+export default [
+  {
+    ignores: ['**/dist'],
+  },
+  {
+    files: ['src/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        process: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    files: ['tests/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        describe: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        setTimeout: 'readonly',
+        global: 'readonly',
+      },
+    },
+  },
+];
