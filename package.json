@@ -1,15 +1,14 @@
 {
   "name": "linkedin-post-scraper",
-  "version": "0.2.0",
-  "description": "Scrape LinkedIn posts with full content, engagement metrics, and author data",
+  "version": "0.3.0",
+  "description": "Scrape LinkedIn posts via backend API — profiles and individual posts",
   "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js"
   },
   "dependencies": {
     "apify": "^3.5.0",
-    "crawlee": "^3.7.0",
-    "playwright": "^1.41.0"
+    "axios": "^1.7.0"
   },
   "engines": {
     "node": ">=18.0.0"

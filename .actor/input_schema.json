@@ -3,34 +3,40 @@
   "type": "object",
   "schemaVersion": 1,
   "properties": {
-    "postUrl": {
-      "title": "LinkedIn Post URL",
+    "profileUrl": {
+      "title": "Profile URL or Username",
       "type": "string",
-      "description": "Single LinkedIn post/profile URL to scrape",
+      "description": "LinkedIn profile URL (e.g. https://www.linkedin.com/in/satyanadella) or just the username",
       "editor": "textfield",
-      "example": "https://www.linkedin.com/posts/satyanadella_6988234986234-"
+      "example": "https://www.linkedin.com/in/satyanadella"
+    },
+    "postUrl": {
+      "title": "Single Post URL",
+      "type": "string",
+      "description": "Single LinkedIn post URL to fetch",
+      "editor": "textfield"
     },
     "postUrls": {
-      "title": "LinkedIn Post URLs (Batch)",
+      "title": "Post URLs (Batch)",
       "type": "array",
       "editor": "stringList",
-          "items": { "type": "string" },
-      "description": "Array of LinkedIn URLs to scrape in batch",
-          },
-    
-    "includeComments": {
-      "title": "Include Comments",
-      "type": "boolean",
-      "description": "Attempt to scrape comments (experimental)",
-      "default": false
+      "items": { "type": "string" },
+      "description": "Array of LinkedIn post URLs to fetch in batch"
     },
-    "maxRetries": {
-      "title": "Max Retries",
+    "count": {
+      "title": "Number of Posts",
       "type": "integer",
-      "description": "Number of retry attempts on failure",
-      "default": 3,
+      "description": "Number of posts to fetch from a profile",
+      "default": 10,
       "minimum": 1,
-      "maximum": 5
+      "maximum": 100
+    },
+    "apiKey": {
+      "title": "API Key",
+      "type": "string",
+      "description": "Backend API key (optional, uses default if not provided)",
+      "editor": "textfield",
+      "isSecret": true
     }
   },
   "required": []
