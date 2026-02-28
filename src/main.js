@@ -47,19 +47,55 @@ Actor.main(async () => {
         async requestHandler({ page, request, log }) {
             log.info(`Scraping: ${request.url}`);
 
+            // Wait for page to load
+            await page.waitForTimeout(3000);
+
+            // Dismiss login/signup modals and overlays
+            const dismissSelectors = [
+                'button[aria-label="Dismiss"]',
+                'button[data-tracking-control-name="public_post_feed-cta-modal-dismiss"]',
+                '.contextual-sign-in-modal__modal-dismiss',
+                '.modal__dismiss',
+                'button.cta-modal__dismiss-btn',
+                '[data-test-id="modal-dismiss"]',
+                'icon-close-medium',
+            ];
+            for (const sel of dismissSelectors) {
+                try {
+                    const btn = await page.$(sel);
+                    if (btn) {
+                        await btn.click();
+                        log.info(`Dismissed modal: ${sel}`);
+                        await page.waitForTimeout(1000);
+                    }
+                } catch {}
+            }
+
+            // Also try pressing Escape to close any modal
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(1000);
+
+            // Scroll down to trigger lazy loading
+            await page.evaluate(() => window.scrollTo(0, 500));
+            await page.waitForTimeout(2000);
+
             // Wait for post content to render
             try {
                 await page.waitForSelector(
-                    '.feed-shared-update-v2, .share-update-card, .attributed-text-segment-list__content, .update-components-text, [data-test-id="main-feed-activity-card"]',
-                    { timeout: 20000 }
+                    '.feed-shared-update-v2, .share-update-card, .attributed-text-segment-list__content, .update-components-text, [data-test-id="main-feed-activity-card"], .show-more-less-html__markup, .break-words',
+                    { timeout: 15000 }
                 );
             } catch {
                 log.warning('Post content selector not found, trying to parse whatever loaded...');
-                // Wait a bit more for any content
-                await page.waitForTimeout(5000);
+                await page.waitForTimeout(3000);
             }
 
             const html = await page.content();
+
+            // Debug: log page title and body text length to help diagnose issues
+            const pageTitle = await page.title();
+            log.info(`Page title: "${pageTitle}" | HTML length: ${html.length}`);
+
             const pageData = await page.evaluate(() => {
                 // Extract data from the rendered DOM
                 const getText = (selectors) => {
@@ -76,8 +112,11 @@ Actor.main(async () => {
                     return match ? parseInt(match[1], 10) : 0;
                 };
 
-                // Post text
+                // Post text — logged out view uses different selectors
                 const postText = getText([
+                    '.show-more-less-html__markup',
+                    '.break-words .break-words span[dir="ltr"]',
+                    '.break-words',
                     '.feed-shared-update-v2__description .break-words span[dir="ltr"]',
                     '.feed-shared-update-v2__description',
                     '.update-components-text__text-view span[dir="ltr"]',
@@ -85,17 +124,23 @@ Actor.main(async () => {
                     '.attributed-text-segment-list__content',
                     '[data-ad-preview="message"]',
                     '.share-update-card__update-text',
+                    '.feed-shared-inline-show-more-text',
                 ]);
 
-                // Author
+                // Author — logged out view
                 const authorName = getText([
+                    '.top-card-layout__title',
+                    '.base-main-card__title',
                     '.update-components-actor__name .hoverable-link-text span[aria-hidden="true"]',
                     '.update-components-actor__name',
                     '.feed-shared-actor__name',
                     '.share-update-card__actor-text',
+                    'a.app-aware-link span[dir="ltr"]',
                 ]);
 
                 const authorTitle = getText([
+                    '.top-card-layout__headline',
+                    '.base-main-card__subtitle',
                     '.update-components-actor__description',
                     '.feed-shared-actor__description',
                     '.update-components-actor__supplementary-actor-info',
