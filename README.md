@@ -1,100 +1,135 @@
-# LinkedIn Post Scraper
+# LinkedIn Post Scraper — Extract Posts, Engagement & Media from Any Profile
 
-A powerful and reliable Apify Actor for scraping LinkedIn posts and profiles. Extract post content, author information, engagement metrics, and more without requiring authentication.
+Scrape LinkedIn profile posts at scale — get full post text, author details, engagement stats (likes, comments, reposts), media attachments, hashtags, and more. **No cookies or login needed.**
 
-## Features
+## ✨ Key Features
 
-- **No Login Required**: Scrapes public LinkedIn posts using public API endpoints
-- **Batch Processing**: Process multiple URLs in a single run
-- **Structured Data Extraction**: Extracts titles, descriptions, images, and Open Graph metadata
-- **JSON-LD Support**: Parses structured data when available
-- **Error Handling**: Graceful error handling with retry logic
-- **Rate Limiting**: Built-in rate limiting to avoid IP blocks
-- **Fast & Reliable**: Optimized for speed and reliability
+- 🔓 **No cookies required** — no risk of account bans or restrictions
+- 👤 **Profile posts** — scrape recent posts from any public LinkedIn profile
+- 🔗 **Individual post URLs** — fetch data for specific posts (single or batch)
+- 📊 **Full engagement stats** — likes, comments, reposts, reaction breakdowns (love, celebrate, insightful, etc.)
+- 🖼️ **Media extraction** — images, videos, documents, articles with thumbnails
+- #️⃣ **Hashtags & mentions** — parsed from post content
+- 👨‍💼 **Author info** — name, headline, profile URL, profile picture
+- 📄 **Reshare support** — includes original post data for reshared/quoted posts
+- ⚡ **Fast & reliable** — optimized backend with built-in rate limiting
 
-## Use Cases
+## 📥 Input Parameters
 
-- **Market Research**: Analyze competitor LinkedIn activity
-- **Content Monitoring**: Track brand mentions and posts
-- **Lead Generation**: Extract author information from posts
-- **Data Analysis**: Collect LinkedIn data for analysis
-- **Competitive Intelligence**: Monitor industry trends
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `profileUrl` | `string` | No* | LinkedIn profile URL or username (e.g., `https://www.linkedin.com/in/satyanadella` or just `satyanadella`) |
+| `postUrl` | `string` | No* | Single LinkedIn post URL to scrape |
+| `postUrls` | `string[]` | No* | Array of LinkedIn post URLs for batch scraping |
+| `count` | `integer` | No | Number of posts to fetch from a profile (default: `10`, max: `100`) |
 
-## How to Use
+> **\*** At least one of `profileUrl`, `postUrl`, or `postUrls` must be provided.
 
-### Input Schema
+### Usage Modes
 
-The Actor accepts the following input:
+1. **Profile scraping** — Provide `profileUrl` + optional `count` to get a profile's recent posts
+2. **Single post** — Provide `postUrl` to scrape one specific post
+3. **Batch posts** — Provide `postUrls` array to scrape multiple specific posts in one run
 
-```json
-{
-  "postUrl": "https://www.linkedin.com/posts/username_postid-",
-  "postUrls": [
-    "https://www.linkedin.com/posts/user1_postid1-",
-    "https://www.linkedin.com/posts/user2_postid2-"
-  ]
-}
-```
+## 📊 Output Data Schema
 
-### Input Parameters
-
-- **postUrl** (string, optional): Single LinkedIn post or profile URL
-- **postUrls** (array, optional): Array of LinkedIn URLs for batch processing
-- **maxRetries** (integer, optional): Number of retry attempts (1-5, default: 3)
-
-### Output
-
-The Actor outputs structured data for each post:
+Each post in the output dataset contains:
 
 ```json
 {
-  "url": "https://www.linkedin.com/posts/satyanadella_...",
-  "success": true,
-  "data": {
-    "title": "Post title",
-    "description": "Post content",
-    "image": "https://image-url.jpg",
-    "url": "https://canonical-url",
-    "type": "article",
-    "structured": {}
+  "urn": "7123456789012345678",
+  "posted_at": {
+    "date": "2025-05-15 14:30:20",
+    "relative": "2 days ago",
+    "timestamp": 1745678901234
   },
-  "fetchedAt": "2024-01-19T22:00:00.000Z"
+  "text": "Excited to announce our latest product launch! 🚀 #innovation #tech",
+  "url": "https://www.linkedin.com/posts/johndoe_innovation-tech-activity-7123456789012345678-AbCd",
+  "post_type": "regular",
+  "author": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "headline": "CEO at Example Company",
+    "username": "johndoe",
+    "profile_url": "https://www.linkedin.com/in/johndoe",
+    "profile_picture": "https://media.licdn.com/dms/image/profile-pic.jpg"
+  },
+  "stats": {
+    "total_reactions": 523,
+    "like": 400,
+    "support": 25,
+    "love": 60,
+    "insight": 18,
+    "celebrate": 20,
+    "comments": 47,
+    "reposts": 12
+  },
+  "media": {
+    "type": "image",
+    "url": "https://media.licdn.com/dms/image/sample-image.jpg",
+    "thumbnail": "https://media.licdn.com/dms/image/sample-thumbnail.jpg"
+  },
+  "hashtags": ["innovation", "tech"],
+  "reshared_post": null
 }
 ```
 
-## Error Handling
+### Media Types
 
-`maxRetries` is configurable per run (1-5, default: 3).
+Posts can include different media types: `image`, `images` (carousel), `video`, `document`, or `article` — each with relevant URLs and thumbnails.
 
+## 🎯 Use Cases
 
-- **404 Not Found**: Post URL is invalid or deleted
-- **403 Forbidden**: Access denied, may need proxy
-- **429 Rate Limited**: Too many requests, will retry with backoff
-- **500+ Server Error**: Server issue, will retry automatically
+- **Market Research** — Analyze what industry leaders and competitors are posting about. Track trending topics and content strategies.
+- **Lead Generation** — Identify engaged prospects by analyzing who's posting about topics relevant to your business.
+- **Content Analysis** — Study high-performing content patterns — what formats, lengths, and topics drive the most engagement.
+- **Competitor Monitoring** — Track competitor announcements, product launches, and hiring activity through their LinkedIn posts.
+- **Social Selling** — Build hyper-personalized outreach by referencing a prospect's recent LinkedIn activity.
+- **Brand Monitoring** — Track mentions and posts about your brand across LinkedIn profiles.
+- **Influencer Research** — Evaluate potential partners by analyzing their posting frequency, engagement rates, and audience.
 
-## Tips & Best Practices
+## 💰 Pricing
 
-1. **URL Format**: Ensure LinkedIn URLs are in the correct format
-2. **Rate Limiting**: Adjust `LINKEDIN_RATE_LIMIT` environment variable for speed/reliability tradeoff
-3. **Batch Processing**: Use `postUrls` array for processing multiple posts efficiently
-4. **Proxy Support**: Use Apify Proxy for large-scale scraping
-5. **Error Monitoring**: Monitor failed runs in the Apify console
+This actor uses a **pay-per-event** pricing model:
 
-## Technical Details
+- **~$2 per 1,000 posts** scraped
+- No monthly subscription — pay only for what you use
+- Free tier available on Apify for testing
 
-- **Technology**: Node.js with Axios and Cheerio
-- **Deployment**: Apify Actor with Docker containerization
-- **Requirements**: No authentication needed
-- **Performance**: Optimized for fast execution
+## ❓ FAQ
 
-## API Documentation
+**Do I need to provide my LinkedIn cookies or credentials?**
+No. This actor uses a backend service that handles authentication. Your LinkedIn account is never at risk.
 
-For complete documentation, visit the [Apify Actor documentation](https://docs.apify.com/platform/actors).
+**Can I scrape any LinkedIn profile's posts?**
+You can scrape posts from public LinkedIn profiles. Private or restricted profiles may return limited data.
 
-## Support
+**What's the maximum number of posts I can scrape per profile?**
+Up to 100 posts per run. For larger volumes, run the actor multiple times.
 
-For issues or feature requests, please visit the [GitHub repository](https://github.com/buzz39/linkedin-post-scrapper-apify).
+**Can I scrape company page posts?**
+Currently optimized for personal profile posts. Company page support may be added in future updates.
 
-## License
+**How fresh is the data?**
+Data is scraped in real-time — you always get the latest posts and engagement metrics.
 
-MIT License - See LICENSE file for details
+**Does it work with LinkedIn post URLs from shares/reposts?**
+Yes. The actor returns the full reshared post data including the original post content and author.
+
+**What format is the output in?**
+Data is returned as JSON in the Apify dataset. You can export to CSV, Excel, JSON, or connect via API.
+
+## ⚠️ Rate Limits & Usage Notes
+
+- Built-in rate limiting ensures reliable scraping without IP blocks
+- Maximum of **100 posts** per profile per run
+- For high-volume usage, space out runs or use Apify's scheduling feature
+- The actor respects LinkedIn's infrastructure — excessive parallel runs may result in temporary throttling
+- Results are stored in the Apify dataset and available via API for 7 days (default retention)
+
+## 🔗 Related Resources
+
+- [Apify Platform Documentation](https://docs.apify.com)
+- [API Integration Guide](https://docs.apify.com/api/v2)
+- [Apify Python Client](https://docs.apify.com/api/client/python)
+- [Apify JavaScript Client](https://docs.apify.com/api/client/js)

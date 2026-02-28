@@ -1,11 +1,31 @@
 {
     "actorSpecification": 1,
     "name": "linkedin-post-scraper",
-    "title": "LinkedIn Post Scraper",
-    "description": "Scrape LinkedIn posts via API — supports profiles and individual post URLs.",
+    "title": "LinkedIn Post Scraper — No Cookies Needed",
+    "description": "Scrape LinkedIn profile posts at scale. Get full post text, author info, engagement stats (likes, comments, reposts), media, hashtags. No cookies or login required. Supports profile URLs, usernames, and individual post URLs.",
     "version": "0.3",
     "meta": {
         "templateId": "js-start"
     },
-    "input": "./input_schema.json"
+    "input": "./input_schema.json",
+    "seoTitle": "LinkedIn Post Scraper API — Extract Posts & Engagement Data",
+    "seoDescription": "Scrape LinkedIn posts from any profile — full text, engagement stats, media, hashtags, author info. No cookies needed. Pay per use.",
+    "categories": ["SOCIAL_MEDIA"],
+    "keywords": [
+        "linkedin",
+        "linkedin scraper",
+        "linkedin post scraper",
+        "linkedin posts",
+        "linkedin profile posts",
+        "linkedin data extraction",
+        "linkedin api",
+        "social media scraper",
+        "linkedin engagement",
+        "linkedin content",
+        "lead generation",
+        "market research",
+        "competitor monitoring",
+        "no cookies",
+        "linkedin automation"
+    ]
 }
