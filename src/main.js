@@ -1,6 +1,5 @@
 const { Actor } = require('apify');
 const { PlaywrightCrawler } = require('crawlee');
-const { parsePostPage } = require('./parser');
 const { extractUrlsFromInput } = require('./utils');
 
 Actor.main(async () => {
