@@ -181,7 +181,7 @@ async function extractPostData(page, originalUrl) {
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
-    const { postUrl, postUrls, li_at } = input;
+    const { postUrl, postUrls, li_at, jsessionid } = input;
 
     if (!li_at) {
         throw new Error('li_at cookie is required. Get it from DevTools → Application → Cookies → linkedin.com → li_at');
@@ -240,7 +240,7 @@ Actor.main(async () => {
         },
         {
             name: 'JSESSIONID',
-            value: `"ajax:${Date.now()}"`,
+            value: jsessionid || `"ajax:${Date.now()}"`,
             domain: '.linkedin.com',
             path: '/',
             httpOnly: false,
@@ -271,8 +271,8 @@ Actor.main(async () => {
         // Step 1: Load LinkedIn feed first to establish session
         console.log('🔐 Step 1: Loading LinkedIn feed to establish session...');
         const feedResponse = await page.goto('https://www.linkedin.com/feed/', {
-            waitUntil: 'domcontentloaded',
-            timeout: 30000,
+            waitUntil: 'networkidle',
+            timeout: 45000,
         });
 
         const feedUrl = page.url();
@@ -302,6 +302,13 @@ Actor.main(async () => {
         }
 
         console.log('✅ Session established! On feed page.');
+        
+        // Debug: save feed screenshot + HTML size
+        const feedHtml = await page.content();
+        console.log(`  Feed HTML size: ${feedHtml.length} bytes`);
+        const feedScreenshot = await page.screenshot({ fullPage: false });
+        await Actor.setValue('debug-feed.png', feedScreenshot, { contentType: 'image/png' });
+        
         await page.waitForTimeout(2000 + Math.random() * 2000);
 
         // Step 2: Navigate to each post
@@ -312,8 +319,8 @@ Actor.main(async () => {
 
             try {
                 await page.goto(postUrl, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 30000,
+                    waitUntil: 'networkidle',
+                    timeout: 45000,
                 });
 
                 const currentUrl = page.url();
@@ -333,14 +340,14 @@ Actor.main(async () => {
                 // Wait for post content
                 try {
                     await page.waitForSelector(
-                        '.update-components-text, .feed-shared-text__text-view, .feed-shared-update-v2__description',
-                        { timeout: 15000 }
+                        '.update-components-text, .feed-shared-text__text-view, .feed-shared-update-v2__description, .break-words, [data-urn], .scaffold-finite-scroll',
+                        { timeout: 20000 }
                     );
                 } catch {
                     console.log('  ⚠️ Post text selector not found, extracting anyway...');
                 }
 
-                await page.waitForTimeout(1000);
+                await page.waitForTimeout(3000);
 
                 const result = await extractPostData(page, url);
 
