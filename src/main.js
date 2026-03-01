@@ -1,498 +1,358 @@
 const { Actor } = require('apify');
-const axios = require('axios');
-const { HttpsProxyAgent } = require('https-proxy-agent');
-
-const VOYAGER_BASE = 'https://www.linkedin.com/voyager/api';
-
-const HEADERS = {
-    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'accept': 'application/vnd.linkedin.normalized+json+2.1',
-    'accept-language': 'en-US,en;q=0.9',
-    'x-li-lang': 'en_US',
-    'x-restli-protocol-version': '2.0.0',
-    'x-li-track': JSON.stringify({
-        clientVersion: '1.13.8677',
-        mpVersion: '1.13.8677',
-        osName: 'web',
-        timezoneOffset: -5,
-        timezone: 'America/New_York',
-        deviceFormFactor: 'DESKTOP',
-        mpName: 'voyager-web',
-        displayDensity: 1,
-        displayWidth: 1920,
-        displayHeight: 1080,
-    }),
-};
+const { PlaywrightCrawler } = require('crawlee');
 
 /**
  * Extract activity ID from various LinkedIn post URL formats
  */
 function extractActivityId(url) {
-    // /posts/username_text-activity-1234567890-xxxx
     let match = url.match(/activity[- ](\d+)/i);
     if (match) return match[1];
-
-    // /feed/update/urn:li:activity:1234567890
     match = url.match(/urn:li:activity:(\d+)/);
     if (match) return match[1];
-
-    // /feed/update/urn:li:ugcPost:1234567890
     match = url.match(/urn:li:ugcPost:(\d+)/);
     if (match) return match[1];
-
     return null;
 }
 
 /**
- * Make authenticated Voyager API request
+ * Convert any LinkedIn post URL to the feed/update format
  */
-async function voyagerGet(path, { li_at, jsessionid, proxyUrl }) {
-    const csrfToken = jsessionid || `ajax:${Date.now()}`;
-    const cookieStr = `li_at=${li_at}; JSESSIONID="${csrfToken}"`;
-
-    const config = {
-        url: `${VOYAGER_BASE}${path}`,
-        headers: {
-            ...HEADERS,
-            'csrf-token': csrfToken,
-            'cookie': cookieStr,
-        },
-        timeout: 30000,
-        maxRedirects: 5,
-    };
-
-    if (proxyUrl) {
-        config.httpsAgent = new HttpsProxyAgent(proxyUrl);
+function toFeedUrl(url) {
+    const activityId = extractActivityId(url);
+    if (activityId) {
+        return `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`;
     }
-
-    try {
-        const response = await axios(config);
-        return response.data;
-    } catch (e) {
-        // If proxy fails, retry without proxy
-        if (proxyUrl && (e.message.includes('redirect') || e.message.includes('TUNNEL'))) {
-            console.log(`  ⚠️ Proxy failed (${e.message}), retrying without proxy...`);
-            delete config.httpsAgent;
-            const response = await axios(config);
-            return response.data;
-        }
-        throw e;
-    }
+    return url;
 }
 
 /**
- * Parse a feed update from Voyager API response
+ * Extract post data from the rendered LinkedIn page
  */
-function parseUpdate(element, included = []) {
-    // Build lookup map from included entities
-    const entityMap = {};
-    for (const item of included) {
-        if (item.entityUrn || item['*entityUrn']) {
-            entityMap[item.entityUrn || item['*entityUrn']] = item;
-        }
-        if (item.$recipeTypes) {
-            // Index by recipe type for easier lookup
-            for (const type of item.$recipeTypes) {
-                if (!entityMap[type]) entityMap[type] = [];
-                entityMap[type].push(item);
-            }
-        }
-    }
+async function extractPostData(page, originalUrl) {
+    return page.evaluate((origUrl) => {
+        const result = {
+            success: false,
+            url: origUrl,
+            authorName: '',
+            authorHeadline: '',
+            authorProfileUrl: '',
+            postText: '',
+            timestamp: '',
+            likeCount: 0,
+            commentCount: 0,
+            shareCount: 0,
+            images: [],
+            videoUrl: null,
+            articleTitle: '',
+            articleLink: '',
+            hashtags: [],
+            type: 'text',
+            fetchedAt: new Date().toISOString(),
+        };
 
-    const result = {
-        success: false,
-        authorName: '',
-        authorHeadline: '',
-        authorProfileUrl: '',
-        authorProfileId: '',
-        postText: '',
-        timestamp: '',
-        postedAtTimestamp: null,
-        likeCount: 0,
-        commentCount: 0,
-        shareCount: 0,
-        images: [],
-        videoUrl: null,
-        articleTitle: '',
-        articleLink: '',
-        hashtags: [],
-        urn: '',
-        url: '',
-        isRepost: false,
-        type: 'text',
-    };
+        // Author name
+        const authorEl = document.querySelector(
+            '.update-components-actor__name span[dir="ltr"] span[aria-hidden="true"], ' +
+            '.feed-shared-actor__name span[dir="ltr"] span[aria-hidden="true"], ' +
+            '.update-components-actor__title span[dir="ltr"] span[aria-hidden="true"], ' +
+            '.feed-shared-actor__title span'
+        );
+        if (authorEl) result.authorName = authorEl.textContent.trim();
 
-    // Find the actual content - navigate through the complex response structure
-    // Look for activity/ugcPost in included items
-    let postData = null;
-    let actorData = null;
-    let socialDetail = null;
-    let commentary = null;
+        // Author headline
+        const headlineEl = document.querySelector(
+            '.update-components-actor__description span[dir="ltr"], ' +
+            '.feed-shared-actor__description span[dir="ltr"], ' +
+            '.update-components-actor__supplementary-actor-info'
+        );
+        if (headlineEl) result.authorHeadline = headlineEl.textContent.trim();
 
-    for (const item of included) {
-        const urn = item.entityUrn || '';
+        // Author profile URL
+        const authorLink = document.querySelector(
+            '.update-components-actor__container-link, ' +
+            '.feed-shared-actor__container-link, ' +
+            'a.update-components-actor__meta-link'
+        );
+        if (authorLink) result.authorProfileUrl = authorLink.href.split('?')[0];
 
-        // Find the post content (ugcPost or share)
-        if (urn.includes('urn:li:ugcPost:') || urn.includes('urn:li:share:')) {
-            if (item.commentary || item.text || item.specificContent) {
-                postData = item;
-            }
-        }
-
-        // Find actor (author info)
-        if (item.$type === 'com.linkedin.voyager.feed.render.ActorComponent' ||
-            urn.includes('urn:li:fsd_profile:') || urn.includes('urn:li:fs_miniProfile:')) {
-            if (item.firstName || item.name || item.title) {
-                actorData = item;
-            }
-        }
-
-        // Find social counts
-        if (item.$type === 'com.linkedin.voyager.feed.render.SocialDetail' ||
-            item.totalSocialActivityCounts || item.likes || item.numLikes !== undefined) {
-            socialDetail = item;
-        }
-    }
-
-    // Extract text from various possible locations
-    if (postData) {
-        // Commentary text (newer format)
-        if (postData.commentary && postData.commentary.text) {
-            result.postText = postData.commentary.text.text || postData.commentary.text;
-        }
-        // Direct text
-        else if (postData.text && typeof postData.text === 'object') {
-            result.postText = postData.text.text || '';
-        }
-        else if (typeof postData.text === 'string') {
-            result.postText = postData.text;
-        }
-        // specificContent (older format)
-        else if (postData.specificContent) {
-            const shareCommentary = postData.specificContent?.['com.linkedin.ugc.ShareContent']?.shareCommentary;
-            if (shareCommentary) {
-                result.postText = shareCommentary.text || '';
-            }
+        // Post text — multiple possible selectors
+        const textEl = document.querySelector(
+            '.feed-shared-update-v2__description .update-components-text, ' +
+            '.update-components-text__text-view, ' +
+            '.feed-shared-text__text-view, ' +
+            '.break-words .update-components-text, ' +
+            '[data-ad-preview="message"] span[dir="ltr"]'
+        );
+        if (textEl) {
+            result.postText = textEl.innerText.trim();
         }
 
         // Timestamp
-        if (postData.createdAt || postData.created) {
-            result.postedAtTimestamp = postData.createdAt || postData.created?.time;
-            if (result.postedAtTimestamp) {
-                result.timestamp = new Date(result.postedAtTimestamp).toISOString();
+        const timeEl = document.querySelector(
+            '.update-components-actor__sub-description span[aria-hidden="true"], ' +
+            '.feed-shared-actor__sub-description span[aria-hidden="true"], ' +
+            'time'
+        );
+        if (timeEl) {
+            result.timestamp = timeEl.getAttribute('datetime') || timeEl.textContent.trim();
+        }
+
+        // Social counts — parse from the social bar
+        const socialBar = document.querySelector(
+            '.social-details-social-counts, ' +
+            '.feed-shared-social-counts'
+        );
+        if (socialBar) {
+            const reactionsEl = socialBar.querySelector(
+                '.social-details-social-counts__reactions-count, ' +
+                'button[aria-label*="reaction"], button[aria-label*="like"]'
+            );
+            if (reactionsEl) {
+                const num = reactionsEl.textContent.replace(/[^0-9,]/g, '').replace(',', '');
+                result.likeCount = parseInt(num) || 0;
+            }
+
+            const commentsEl = socialBar.querySelector(
+                'button[aria-label*="comment"]'
+            );
+            if (commentsEl) {
+                const num = commentsEl.textContent.replace(/[^0-9,]/g, '').replace(',', '');
+                result.commentCount = parseInt(num) || 0;
+            }
+
+            const sharesEl = socialBar.querySelector(
+                'button[aria-label*="repost"], button[aria-label*="share"]'
+            );
+            if (sharesEl) {
+                const num = sharesEl.textContent.replace(/[^0-9,]/g, '').replace(',', '');
+                result.shareCount = parseInt(num) || 0;
             }
         }
 
-        // URN
-        result.urn = postData.entityUrn || '';
-    }
-
-    // Extract author from included miniProfiles
-    for (const item of included) {
-        if (item.$type?.includes('miniProfile') || item.$type?.includes('MiniProfile') ||
-            (item.firstName && item.lastName && item.publicIdentifier)) {
-            result.authorName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
-            result.authorHeadline = item.occupation || item.headline || '';
-            result.authorProfileId = item.publicIdentifier || '';
-            result.authorProfileUrl = item.publicIdentifier
-                ? `https://www.linkedin.com/in/${item.publicIdentifier}`
-                : '';
-            break;
-        }
-    }
-
-    // Extract social counts
-    if (socialDetail) {
-        const counts = socialDetail.totalSocialActivityCounts || socialDetail;
-        result.likeCount = counts.numLikes || counts.likes || 0;
-        result.commentCount = counts.numComments || counts.comments || 0;
-        result.shareCount = counts.numShares || counts.shares || 0;
-    }
-
-    // Look for social counts in all included items
-    for (const item of included) {
-        if (item.numLikes !== undefined && !socialDetail) {
-            result.likeCount = item.numLikes || 0;
-            result.commentCount = item.numComments || 0;
-            result.shareCount = item.numShares || 0;
-        }
-        // Also check socialDetail references
-        if (item.$type === 'com.linkedin.voyager.feed.shared.SocialDetail') {
-            result.likeCount = item.totalSocialActivityCounts?.numLikes || result.likeCount;
-            result.commentCount = item.totalSocialActivityCounts?.numComments || result.commentCount;
-            result.shareCount = item.totalSocialActivityCounts?.numShares || result.shareCount;
-        }
-    }
-
-    // Extract images from included items
-    for (const item of included) {
-        if (item.$type?.includes('Image') || item.$type?.includes('image')) {
-            const artifacts = item.data?.['com.linkedin.digitalmedia.mediaartifact.StillImage']?.storageAspect?.cropped?.artifacts;
-            if (artifacts) {
-                const largest = artifacts[artifacts.length - 1];
-                if (largest?.fileIdentifyingUrlPathSegment) {
-                    result.images.push(`https://media.licdn.com/dms/image/${largest.fileIdentifyingUrlPathSegment}`);
-                }
+        // Images
+        const imgEls = document.querySelectorAll(
+            '.update-components-image__image img, ' +
+            '.feed-shared-image__image img, ' +
+            '.update-components-linkedin-video__container img'
+        );
+        imgEls.forEach(img => {
+            if (img.src && !img.src.includes('data:')) {
+                result.images.push(img.src);
             }
+        });
+
+        // Video
+        const videoEl = document.querySelector(
+            'video source, video[src]'
+        );
+        if (videoEl) {
+            result.videoUrl = videoEl.src || videoEl.getAttribute('src');
+            result.type = 'video';
         }
-        // Vectorized images (newer format)
-        if (item.rootUrl && item.artifacts) {
-            const largest = item.artifacts[item.artifacts.length - 1];
-            if (largest?.fileIdentifyingUrlPathSegment) {
-                result.images.push(`${item.rootUrl}${largest.fileIdentifyingUrlPathSegment}`);
-            }
+
+        // Article
+        const articleEl = document.querySelector(
+            '.update-components-article, .feed-shared-article'
+        );
+        if (articleEl) {
+            const titleEl = articleEl.querySelector(
+                '.update-components-article__title, .feed-shared-article__title'
+            );
+            const linkEl = articleEl.querySelector('a');
+            if (titleEl) result.articleTitle = titleEl.textContent.trim();
+            if (linkEl) result.articleLink = linkEl.href;
+            result.type = 'article';
         }
-    }
 
-    // Extract video
-    for (const item of included) {
-        if (item.$type?.includes('Video') || item.progressiveStreams) {
-            if (item.progressiveStreams?.length > 0) {
-                result.videoUrl = item.progressiveStreams[0].streamingLocations?.[0]?.url || null;
-                result.type = 'video';
-            }
+        // Hashtags
+        if (result.postText) {
+            const tags = result.postText.match(/#[\w\u00C0-\u024F]+/g);
+            if (tags) result.hashtags = tags;
         }
-    }
 
-    // Extract article
-    for (const item of included) {
-        if (item.$type?.includes('Article') || item.$type?.includes('ExternalUrl')) {
-            result.articleTitle = item.title?.text || item.title || '';
-            result.articleLink = item.url || item.navigationUrl || '';
-            if (result.articleTitle) result.type = 'article';
-        }
-    }
+        // Type detection
+        if (result.images.length > 0 && result.type === 'text') result.type = 'image';
 
-    // Extract hashtags from text
-    if (result.postText) {
-        const hashtagMatches = result.postText.match(/#[\w]+/g);
-        if (hashtagMatches) {
-            result.hashtags = hashtagMatches;
-        }
-    }
-
-    // Determine type
-    if (result.images.length > 0 && result.type === 'text') result.type = 'image';
-
-    result.success = !!(result.postText || result.authorName);
-
-    return result;
+        result.success = !!(result.postText || result.authorName);
+        return result;
+    }, originalUrl);
 }
 
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
-    const { profileUrl, postUrl, postUrls, count = 10, li_at, jsessionid } = input;
+    const { postUrl, postUrls, li_at } = input;
 
     if (!li_at) {
         throw new Error('li_at cookie is required. Get it from DevTools → Application → Cookies → linkedin.com → li_at');
     }
 
+    // Collect URLs
+    const urls = [];
+    if (postUrl) urls.push(postUrl);
+    if (Array.isArray(postUrls)) urls.push(...postUrls);
+    if (urls.length === 0) throw new Error('Provide postUrl or postUrls');
+
+    console.log(`📝 Scraping ${urls.length} LinkedIn post(s)...`);
+
     const proxyConfiguration = await Actor.createProxyConfiguration({
         groups: ['RESIDENTIAL'],
         countryCode: 'US',
     });
-    const proxyUrl = await proxyConfiguration.newUrl();
 
-    const authOpts = { li_at, jsessionid, proxyUrl };
-
-    // ── Verify session first ──
-    console.log('🔐 Verifying LinkedIn session...');
-    try {
-        const me = await voyagerGet('/me', authOpts);
-        const name = me?.miniProfile
-            ? `${me.miniProfile.firstName} ${me.miniProfile.lastName}`
-            : 'Unknown';
-        console.log(`✅ Authenticated as: ${name}`);
-    } catch (e) {
-        console.error('❌ Authentication failed:', e.message);
-        throw new Error('li_at cookie is invalid or expired. Get a fresh one from your browser.');
-    }
-
-    // ── Collect URLs ──
-    const urls = [];
-    if (postUrl) urls.push(postUrl);
-    if (Array.isArray(postUrls)) urls.push(...postUrls);
-
-    // ── Mode 1: Individual posts ──
-    if (urls.length > 0) {
-        console.log(`📝 Fetching ${urls.length} post(s) via Voyager API...`);
-
-        for (const url of urls) {
-            const activityId = extractActivityId(url);
-            if (!activityId) {
-                console.error(`⚠️ Could not extract activity ID from: ${url}`);
-                await Actor.pushData({
-                    url,
-                    success: false,
-                    error: 'Could not extract activity ID from URL',
-                    fetchedAt: new Date().toISOString(),
-                });
-                continue;
-            }
-
-            console.log(`  Fetching activity: ${activityId}`);
-
-            try {
-                const urn = `urn:li:activity:${activityId}`;
-                let data = null;
-                let endpointUsed = '';
-
-                // Try multiple Voyager API endpoint formats
-                const endpoints = [
-                    { path: `/feed/updates/urn:li:activity:${activityId}`, name: 'feed/updates/urn' },
-                    { path: `/feed/updates/urn:li:ugcPost:${activityId}`, name: 'feed/updates/ugcPost' },
-                    { path: `/graphql?variables=(activityUrn:${encodeURIComponent(urn)})&queryId=voyagerFeedDashActivityById.cafb67e9a5e6c2e5e3e4ebab5d675064`, name: 'graphql-activity' },
-                ];
-
-                for (const ep of endpoints) {
-                    try {
-                        console.log(`  Trying ${ep.name}...`);
-                        data = await voyagerGet(ep.path, authOpts);
-                        endpointUsed = ep.name;
-                        console.log(`  ✅ ${ep.name} responded! Keys: ${Object.keys(data || {}).join(', ')}`);
-                        break;
-                    } catch (e) {
-                        const status = e.response?.status || 'no status';
-                        console.log(`  ❌ ${ep.name}: ${status} - ${e.message.substring(0, 80)}`);
-                        // Save debug info
-                        if (e.response?.data) {
-                            await Actor.setValue(`debug-${ep.name}-${activityId}.json`, 
-                                { status, data: e.response.data, headers: Object.fromEntries(Object.entries(e.response.headers || {})) },
-                                { contentType: 'application/json' });
-                        }
-                    }
-                }
-
-                if (!data) {
-                    console.log(`  ❌ All endpoints failed for ${activityId}`);
-                    await Actor.pushData({
-                        url,
-                        success: false,
-                        error: 'All Voyager API endpoints failed — cookie may be invalid or post not accessible',
-                        fetchedAt: new Date().toISOString(),
+    const crawler = new PlaywrightCrawler({
+        proxyConfiguration,
+        maxRequestRetries: 2,
+        requestHandlerTimeoutSecs: 60,
+        browserPoolOptions: {
+            maxOpenPagesPerBrowser: 1,
+            retireBrowserAfterPageCount: 3,
+        },
+        launchContext: {
+            launchOptions: {
+                headless: true,
+                args: [
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                ],
+            },
+        },
+        preNavigationHooks: [
+            async ({ page, request }, gotoOptions) => {
+                // Remove webdriver flag
+                await page.addInitScript(() => {
+                    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+                    // Fake Chrome runtime
+                    window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
+                    // Fake plugins
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5],
                     });
-                    continue;
-                }
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en'],
+                    });
+                });
 
-                const included = data?.included || [];
-                const elements = data?.elements || (data?.results ? Object.values(data.results) : []);
+                // Inject li_at cookie into browser context
+                const context = page.context();
+                await context.addCookies([
+                    {
+                        name: 'li_at',
+                        value: request.userData.li_at,
+                        domain: '.linkedin.com',
+                        path: '/',
+                        httpOnly: true,
+                        secure: true,
+                        sameSite: 'None',
+                    },
+                    {
+                        name: 'JSESSIONID',
+                        value: `"ajax:${Date.now()}"`,
+                        domain: '.linkedin.com',
+                        path: '/',
+                        httpOnly: false,
+                        secure: true,
+                        sameSite: 'None',
+                    },
+                    {
+                        name: 'lang',
+                        value: 'v=2&lang=en-us',
+                        domain: '.linkedin.com',
+                        path: '/',
+                        secure: true,
+                        sameSite: 'None',
+                    },
+                ]);
+            },
+        ],
 
-                // Always save raw response for debugging
-                await Actor.setValue(`debug-raw-${activityId}.json`, data, { contentType: 'application/json' });
+        requestHandler: async ({ page, request, log }) => {
+            const originalUrl = request.userData.originalUrl;
+            const feedUrl = request.url;
 
-                const result = parseUpdate(elements[0] || data, included);
-                result.url = url;
-                result.urn = result.urn || urn;
-                result.endpointUsed = endpointUsed;
-                result.fetchedAt = new Date().toISOString();
+            log.info(`Navigating to: ${feedUrl}`);
 
-                if (result.success) {
-                    console.log(`  ✅ ${result.authorName}: ${result.postText.substring(0, 80)}...`);
-                } else {
-                    console.log(`  ⚠️ Parsed but no content extracted. Included types: ${[...new Set(included.map(i => i.$type).filter(Boolean))].join(', ')}`);
-                    result.error = 'Could not parse post content from API response';
-                    result._includedTypes = [...new Set(included.map(i => i.$type).filter(Boolean))];
-                    result._includedCount = included.length;
-                    result._elementCount = elements.length;
-                }
+            // Wait for the page to load
+            await page.waitForLoadState('domcontentloaded');
+            await page.waitForTimeout(2000 + Math.random() * 2000);
 
-                await Actor.pushData(result);
-            } catch (e) {
-                console.error(`  ❌ Failed: ${e.message}`);
+            // Check if we're on a login page
+            const currentUrl = page.url();
+            if (currentUrl.includes('login') || currentUrl.includes('authwall') || currentUrl.includes('signup')) {
+                log.error('Redirected to login page — cookie is invalid or expired');
+                
+                // Save screenshot for debugging
+                const screenshot = await page.screenshot({ fullPage: false });
+                await Actor.setValue(`debug-login-${request.userData.activityId}.png`, screenshot, { contentType: 'image/png' });
+                
                 await Actor.pushData({
-                    url,
+                    url: originalUrl,
                     success: false,
-                    error: e.message,
+                    error: 'Redirected to login — li_at cookie is invalid or expired',
                     fetchedAt: new Date().toISOString(),
                 });
+                return;
             }
 
-            // Rate limiting - small delay between requests
-            await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
-        }
-        return;
-    }
+            // Wait for post content to render
+            try {
+                await page.waitForSelector(
+                    '.update-components-text, .feed-shared-text__text-view, .feed-shared-update-v2__description',
+                    { timeout: 15000 }
+                );
+            } catch {
+                log.warning('Post text selector not found, trying to extract anyway...');
+            }
 
-    // ── Mode 2: Profile posts ──
-    let username = profileUrl || input.username;
-    if (!username) throw new Error('Provide postUrl, postUrls, or profileUrl');
+            // Small delay for dynamic content
+            await page.waitForTimeout(1000);
 
-    const match = username.match(/linkedin\.com\/in\/([^/?#]+)/);
-    if (match) username = match[1];
+            // Extract post data from DOM
+            const result = await extractPostData(page, originalUrl);
 
-    console.log(`👤 Fetching ${count} posts for profile: ${username}`);
-
-    try {
-        // First get profile URN
-        const profileData = await voyagerGet(
-            `/identity/profiles/${username}/profileView`,
-            authOpts
-        );
-
-        const miniProfile = profileData?.included?.find(i =>
-            i.$type?.includes('miniProfile') || i.$type?.includes('MiniProfile') ||
-            (i.publicIdentifier === username)
-        );
-
-        if (!miniProfile) {
-            throw new Error(`Profile not found: ${username}`);
-        }
-
-        const profileUrn = miniProfile.entityUrn?.replace('fs_miniProfile', 'fsd_profile') ||
-            `urn:li:fsd_profile:${miniProfile.objectUrn?.split(':').pop()}`;
-
-        console.log(`  Profile URN: ${profileUrn}`);
-
-        // Fetch posts
-        const postsData = await voyagerGet(
-            `/identity/profileUpdatesV2?` + new URLSearchParams({
-                q: 'memberShareFeed',
-                moduleKey: 'member-shares:phone',
-                count: String(Math.min(count, 100)),
-                start: '0',
-                profileUrn,
-                includeLongTermHistory: 'true',
-            }).toString(),
-            authOpts
-        );
-
-        const included = postsData?.included || [];
-        const elements = postsData?.elements || [];
-
-        console.log(`  Found ${elements.length} feed elements, ${included.length} included items`);
-
-        // Parse each post
-        let parsed = 0;
-        for (const element of elements) {
-            if (parsed >= count) break;
-
-            const result = parseUpdate(element, included);
             if (result.success) {
-                result.authorUsername = username;
-                result.fetchedAt = new Date().toISOString();
-                await Actor.pushData(result);
-                parsed++;
-                console.log(`  ✅ [${parsed}/${count}] ${result.postText.substring(0, 60)}...`);
+                log.info(`✅ ${result.authorName}: ${result.postText.substring(0, 80)}...`);
+            } else {
+                log.warning('Could not extract post content, saving debug screenshot');
+                const screenshot = await page.screenshot({ fullPage: true });
+                await Actor.setValue(`debug-nodata-${request.userData.activityId}.png`, screenshot, { contentType: 'image/png' });
+                
+                // Save HTML too
+                const html = await page.content();
+                await Actor.setValue(`debug-nodata-${request.userData.activityId}.html`, html, { contentType: 'text/html' });
+                
+                result.error = 'Post loaded but content extraction failed — check debug screenshots';
+                result.currentUrl = currentUrl;
             }
-        }
 
-        if (parsed === 0) {
-            await Actor.setValue('debug-profile-raw.json', postsData, { contentType: 'application/json' });
+            await Actor.pushData(result);
+        },
+
+        failedRequestHandler: async ({ request, log }) => {
+            log.error(`Failed: ${request.url} — ${request.errorMessages.join(', ')}`);
             await Actor.pushData({
-                error: `No posts found for ${username}. Check debug-profile-raw.json`,
-                username,
+                url: request.userData.originalUrl,
+                success: false,
+                error: request.errorMessages.join(', '),
                 fetchedAt: new Date().toISOString(),
             });
-        } else {
-            console.log(`\n✅ Successfully scraped ${parsed} posts for ${username}`);
-        }
-    } catch (e) {
-        console.error(`❌ Failed: ${e.message}`);
-        await Actor.pushData({
-            error: e.message,
-            username,
-            fetchedAt: new Date().toISOString(),
-        });
-    }
+        },
+    });
+
+    // Build requests — navigate to feed URL format
+    const requests = urls.map(url => {
+        const activityId = extractActivityId(url);
+        return {
+            url: toFeedUrl(url),
+            userData: {
+                originalUrl: url,
+                activityId: activityId || 'unknown',
+                li_at,
+            },
+        };
+    });
+
+    await crawler.run(requests);
+
+    console.log('\n✅ Done!');
 });
