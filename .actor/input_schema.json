@@ -3,26 +3,6 @@
     "type": "object",
     "schemaVersion": 1,
     "properties": {
-        "email": {
-            "title": "LinkedIn Email",
-            "type": "string",
-            "description": "Email for LinkedIn login (recommended)",
-            "editor": "textfield"
-        },
-        "password": {
-            "title": "LinkedIn Password",
-            "type": "string",
-            "description": "Password for LinkedIn login",
-            "editor": "textfield",
-            "isSecret": true
-        },
-        "li_at": {
-            "title": "li_at Cookie (alternative)",
-            "type": "string",
-            "description": "li_at session cookie (alternative to email/password)",
-            "editor": "textfield",
-            "isSecret": true
-        },
         "postUrl": {
             "title": "Post URL",
             "type": "string",
@@ -30,14 +10,14 @@
             "editor": "textfield"
         },
         "postUrls": {
-            "title": "Post URLs",
+            "title": "Post URLs (bulk)",
             "type": "array",
-            "description": "Multiple LinkedIn post URLs to scrape",
+            "description": "Multiple LinkedIn post URLs to scrape (max 50 per run)",
             "editor": "json",
             "items": {
                 "type": "string"
             }
         }
     },
-    "required": []
+    "required": ["postUrl"]
 }

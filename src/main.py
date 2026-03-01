@@ -172,9 +172,15 @@ async def main():
     async with Actor:
         actor_input = await Actor.get_input() or {}
         
-        email = actor_input.get('email', '')
-        password = actor_input.get('password', '')
-        li_at = actor_input.get('li_at', '')
+        # Get LinkedIn credentials from env vars (set in Apify Console)
+        import os
+        import requests as req
+        
+        li_at = os.environ.get('LI_AT', '')
+        jsessionid = os.environ.get('LI_JSESSIONID', '')
+        
+        if not li_at or not jsessionid:
+            raise ValueError('LI_AT and LI_JSESSIONID environment variables must be set in Apify Console')
         
         post_url = actor_input.get('postUrl', '')
         post_urls = actor_input.get('postUrls', [])
@@ -189,67 +195,27 @@ async def main():
         if not urls:
             raise ValueError('Provide postUrl or postUrls')
         
+        # Rate limit: max 50 posts per run
+        MAX_POSTS = 50
+        if len(urls) > MAX_POSTS:
+            logger.warning(f'⚠️ Limiting to {MAX_POSTS} posts (requested {len(urls)})')
+            urls = urls[:MAX_POSTS]
+        
         logger.info(f'📝 Scraping {len(urls)} LinkedIn post(s)...')
         
-        # Authenticate
-        from linkedin_api import Linkedin
-        
-        if email and password:
-            logger.info('🔐 Authenticating with email/password (Android API)...')
-            
-            # Use proxy if provided in input, otherwise direct connection
-            proxy_url = actor_input.get('proxyUrl', '')
-            proxies = {}
-            if proxy_url:
-                proxies = {'http': proxy_url, 'https': proxy_url}
-                logger.info(f'🌐 Using custom proxy')
-            else:
-                logger.info('🌐 Direct connection (no proxy)')
-            
-            try:
-                api = Linkedin(email, password, proxies=proxies)
-                logger.info('✅ Authenticated successfully!')
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f'❌ Authentication failed: {error_msg}')
-                for url in urls:
-                    await Actor.push_data({
-                        'url': url,
-                        'success': False,
-                        'error': f'Authentication failed: {error_msg}',
-                        'fetchedAt': datetime.utcnow().isoformat() + 'Z',
-                    })
-                return
-        elif li_at:
-            logger.info('🔐 Using li_at cookie...')
-            jsessionid = actor_input.get('jsessionid', '')
-            if not jsessionid:
-                raise ValueError('jsessionid is required when using li_at cookie')
-            
-            # Strip quotes if present
-            jsessionid_clean = jsessionid.strip('"')
-            
-            # Build raw session (bypass linkedin-api library for cookie auth)
-            import requests as req
-            raw_session = req.Session()
-            raw_session.cookies.set('li_at', li_at, domain='.linkedin.com')
-            raw_session.cookies.set('JSESSIONID', f'"{jsessionid_clean}"', domain='.linkedin.com')
-            raw_session.headers.update({
-                'csrf-token': jsessionid_clean,
-                'x-restli-protocol-version': '2.0.0',
-                'accept': 'application/vnd.linkedin.normalized+json+2.1',
-                'x-li-lang': 'en_US',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            })
-            
-            # Create a simple wrapper to match the api.client.session interface
-            class SimpleAPI:
-                class client:
-                    session = raw_session
-            api = SimpleAPI()
-            logger.info('✅ Cookie session created')
-        else:
-            raise ValueError('Provide email+password OR li_at cookie')
+        # Build authenticated session
+        jsessionid_clean = jsessionid.strip('"')
+        session = req.Session()
+        session.cookies.set('li_at', li_at, domain='.linkedin.com')
+        session.cookies.set('JSESSIONID', f'"{jsessionid_clean}"', domain='.linkedin.com')
+        session.headers.update({
+            'csrf-token': jsessionid_clean,
+            'x-restli-protocol-version': '2.0.0',
+            'accept': 'application/vnd.linkedin.normalized+json+2.1',
+            'x-li-lang': 'en_US',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        })
+        logger.info('✅ Session ready')
         
         # Scrape each post
         for i, url in enumerate(urls):
@@ -269,9 +235,7 @@ async def main():
             try:
                 # Fetch post via Voyager API
                 urn = f'urn:li:activity:{activity_id}'
-                res = api.client.session.get(
-                    f'https://www.linkedin.com/voyager/api/feed/updates/{urn}',
-                )
+                res = session.get(f'https://www.linkedin.com/voyager/api/feed/updates/{urn}')
                 
                 if res.status_code == 200:
                     raw_data = res.json()
@@ -280,43 +244,28 @@ async def main():
                     if result['success']:
                         logger.info(f'  ✅ {result["authorName"]}: {result["postText"][:80]}...')
                     else:
-                        # Check if it's a "cannot be displayed" response
-                        content = raw_data.get('value', {}).get('com.linkedin.voyager.feed.render.UpdateV2', {}).get('content', {})
-                        entity = content.get('com.linkedin.voyager.feed.render.EntityComponent', {})
-                        title = entity.get('title', {}).get('text', '')
-                        if 'cannot be displayed' in title.lower():
-                            result['error'] = 'Post cannot be displayed (may be deleted, restricted, or from a non-connected user)'
-                            logger.warning(f'  ⚠️ {title}')
-                        else:
-                            result['error'] = 'Post loaded but content extraction failed'
-                            logger.warning('  ⚠️ Content extraction returned empty')
-                        result['rawResponse'] = raw_data
+                        result['error'] = 'Post loaded but content extraction failed'
+                        logger.warning('  ⚠️ Content extraction returned empty')
                     
                     await Actor.push_data(result)
                 elif res.status_code == 404:
                     logger.error(f'  ❌ Post not found (404)')
-                    
                     # Try ugcPost format
                     urn2 = f'urn:li:ugcPost:{activity_id}'
-                    res2 = api.client.session.get(
-                        f'https://www.linkedin.com/voyager/api/feed/updates/{urn2}',
-                    )
+                    res2 = session.get(f'https://www.linkedin.com/voyager/api/feed/updates/{urn2}')
                     if res2.status_code == 200:
-                        raw_data = res2.json()
-                        result = parse_post_data(raw_data, url)
+                        result = parse_post_data(res2.json(), url)
                         await Actor.push_data(result)
                     else:
                         await Actor.push_data({
-                            'url': url,
-                            'success': False,
-                            'error': f'Post not found (tried activity and ugcPost URNs)',
+                            'url': url, 'success': False,
+                            'error': 'Post not found (tried activity and ugcPost URNs)',
                             'fetchedAt': datetime.utcnow().isoformat() + 'Z',
                         })
                 else:
                     logger.error(f'  ❌ API returned {res.status_code}: {res.text[:200]}')
                     await Actor.push_data({
-                        'url': url,
-                        'success': False,
+                        'url': url, 'success': False,
                         'error': f'API error: {res.status_code} — {res.text[:200]}',
                         'fetchedAt': datetime.utcnow().isoformat() + 'Z',
                     })
@@ -324,13 +273,12 @@ async def main():
             except Exception as e:
                 logger.error(f'  ❌ Error: {str(e)}')
                 await Actor.push_data({
-                    'url': url,
-                    'success': False,
+                    'url': url, 'success': False,
                     'error': str(e),
                     'fetchedAt': datetime.utcnow().isoformat() + 'Z',
                 })
             
-            # Rate limiting
+            # Rate limiting between requests
             if i < len(urls) - 1:
                 import time, random
                 delay = 2 + random.random() * 3
