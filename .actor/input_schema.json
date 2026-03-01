@@ -20,7 +20,9 @@
       "title": "Post URLs (Batch)",
       "type": "array",
       "editor": "stringList",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Array of LinkedIn post URLs to fetch in batch"
     },
     "count": {
@@ -37,7 +39,23 @@
       "description": "Backend API key (optional, uses default if not provided)",
       "editor": "textfield",
       "isSecret": true
+    },
+    "li_at": {
+      "title": "LinkedIn li_at Cookie",
+      "type": "string",
+      "description": "Your LinkedIn li_at session cookie (required). Get from DevTools \u2192 Application \u2192 Cookies \u2192 linkedin.com \u2192 li_at",
+      "editor": "textfield",
+      "isSecret": true
+    },
+    "jsessionid": {
+      "title": "LinkedIn JSESSIONID",
+      "type": "string",
+      "description": "Your LinkedIn JSESSIONID cookie (optional but recommended)",
+      "editor": "textfield",
+      "isSecret": true
     }
   },
-  "required": []
+  "required": [
+    "li_at"
+  ]
 }

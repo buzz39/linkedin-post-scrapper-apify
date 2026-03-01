@@ -1,14 +1,25 @@
 const { Actor } = require('apify');
-const { PlaywrightCrawler, ProxyConfiguration } = require('crawlee');
+const { PlaywrightCrawler } = require('crawlee');
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
-    const { profileUrl, postUrl, postUrls, count = 10 } = input;
+    const { profileUrl, postUrl, postUrls, count = 10, li_at, jsessionid } = input;
+
+    if (!li_at) {
+        throw new Error('li_at cookie is required. Get it from your LinkedIn browser session (DevTools → Application → Cookies → li_at)');
+    }
 
     // Collect all post URLs
     const urls = [];
     if (postUrl) urls.push(postUrl);
     if (Array.isArray(postUrls)) urls.push(...postUrls);
+
+    const cookies = [
+        { name: 'li_at', value: li_at, domain: '.linkedin.com', path: '/' },
+    ];
+    if (jsessionid) {
+        cookies.push({ name: 'JSESSIONID', value: jsessionid.replace(/"/g, ''), domain: '.linkedin.com', path: '/' });
+    }
 
     const proxyConfiguration = await Actor.createProxyConfiguration({
         groups: ['RESIDENTIAL'],
@@ -17,7 +28,7 @@ Actor.main(async () => {
 
     // ── Mode 1: Scrape individual posts ──
     if (urls.length > 0) {
-        console.log(`Fetching ${urls.length} post(s) via browser...`);
+        console.log(`Fetching ${urls.length} post(s)...`);
 
         const crawler = new PlaywrightCrawler({
             proxyConfiguration,
@@ -26,69 +37,101 @@ Actor.main(async () => {
             browserPoolOptions: {
                 useFingerprints: true,
             },
+            preNavigationHooks: [
+                async ({ page }) => {
+                    await page.context().addCookies(cookies);
+                },
+            ],
             async requestHandler({ request, page, log }) {
                 const originalUrl = request.userData.originalUrl;
                 log.info(`Processing: ${originalUrl}`);
 
-                // Wait for the post content to load
-                await page.waitForSelector('.feed-shared-update-v2, .scaffold-finite-scroll__content, .update-components-text', {
-                    timeout: 15000,
+                // Wait for content
+                await page.waitForSelector('.feed-shared-update-v2, .update-components-text, .scaffold-finite-scroll', {
+                    timeout: 20000,
                 }).catch(() => {});
 
-                // Check if we hit a login wall
-                const loginWall = await page.$('.join-form, .sign-in-form, [data-tracking-control-name="public_post_join-cta"]');
-                
-                // Extract post data from the page
+                // Additional wait for dynamic content
+                await page.waitForTimeout(3000);
+
                 const data = await page.evaluate(() => {
-                    // Author info
-                    const authorEl = document.querySelector('.update-components-actor__title, .top-card-layout__title, .base-main-card__title');
-                    const authorName = authorEl ? authorEl.textContent.trim() : '';
-                    
-                    const headlineEl = document.querySelector('.update-components-actor__description, .top-card-layout__headline, .base-main-card__subtitle');
-                    const authorHeadline = headlineEl ? headlineEl.textContent.trim() : '';
+                    // Author
+                    const authorEl = document.querySelector('.update-components-actor__title span[dir="ltr"] span[aria-hidden="true"], .update-components-actor__name span[aria-hidden="true"]');
+                    const authorName = authorEl ? authorEl.textContent.trim() : 
+                        (document.querySelector('.update-components-actor__title')?.textContent?.trim()?.split('\n')[0]?.trim() || '');
 
-                    // Post text
-                    const textEl = document.querySelector('.feed-shared-update-v2__description, .update-components-text, .attributed-text');
-                    const postText = textEl ? textEl.textContent.trim() : '';
+                    const headlineEl = document.querySelector('.update-components-actor__description span[aria-hidden="true"]');
+                    const authorHeadline = headlineEl ? headlineEl.textContent.trim() :
+                        (document.querySelector('.update-components-actor__description')?.textContent?.trim() || '');
 
-                    // Fallback: try getting text from any visible content area
-                    const fallbackText = !postText ? (document.querySelector('.break-words, .feed-shared-text')?.textContent?.trim() || '') : postText;
+                    // Post text - try multiple selectors
+                    let postText = '';
+                    const textSelectors = [
+                        '.update-components-text .break-words span[dir="ltr"]',
+                        '.update-components-text .break-words',
+                        '.feed-shared-update-v2__description .break-words',
+                        '.feed-shared-text__text-view',
+                    ];
+                    for (const sel of textSelectors) {
+                        const el = document.querySelector(sel);
+                        if (el && el.textContent.trim().length > 10) {
+                            postText = el.textContent.trim();
+                            break;
+                        }
+                    }
 
                     // Timestamp
-                    const timeEl = document.querySelector('.update-components-actor__sub-description, time, .top-card-layout__first-subline');
-                    const timestamp = timeEl ? timeEl.textContent.trim() : '';
+                    const timeEl = document.querySelector('.update-components-actor__sub-description span[aria-hidden="true"]');
+                    const timestamp = timeEl ? timeEl.textContent.trim() :
+                        (document.querySelector('time')?.textContent?.trim() || '');
 
                     // Social counts
-                    const likesEl = document.querySelector('.social-details-social-counts__reactions-count, .social-counts-reactions');
-                    const commentsEl = document.querySelector('.social-details-social-counts__comments, .social-counts-comments');
+                    const reactionsEl = document.querySelector('.social-details-social-counts__reactions-count');
+                    const commentsEl = document.querySelector('[data-test-id="social-actions__comments"], .social-details-social-counts__comments');
+                    const repostsEl = document.querySelector('.social-details-social-counts__item--with-social-proof');
                     
-                    const likeCount = likesEl ? parseInt(likesEl.textContent.replace(/[^0-9]/g, '') || '0') : 0;
-                    const commentCount = commentsEl ? parseInt(commentsEl.textContent.replace(/[^0-9]/g, '') || '0') : 0;
+                    const parseCount = (el) => {
+                        if (!el) return 0;
+                        const text = el.textContent.replace(/[^0-9,]/g, '').replace(/,/g, '');
+                        return parseInt(text || '0');
+                    };
 
                     // Images
                     const images = [];
-                    document.querySelectorAll('.update-components-image img, .feed-shared-image img').forEach(img => {
+                    document.querySelectorAll('.update-components-image__container img, .ivm-view-attr__img--centered').forEach(img => {
                         const src = img.src || img.getAttribute('data-delayed-url');
-                        if (src && !src.includes('profile-photo') && !src.includes('/li/') && src.startsWith('http')) {
+                        if (src && src.startsWith('http') && !src.includes('profile-displayphoto') && !src.includes('company-logo')) {
                             images.push(src);
                         }
                     });
 
-                    // Article/link preview
-                    const articleEl = document.querySelector('.update-components-article__title, .feed-shared-article__title');
-                    const articleTitle = articleEl ? articleEl.textContent.trim() : '';
-                    const articleLink = document.querySelector('.update-components-article a, .feed-shared-article a')?.href || '';
+                    // Video
+                    const videoEl = document.querySelector('video');
+                    const videoUrl = videoEl ? (videoEl.src || videoEl.querySelector('source')?.src || '') : '';
+
+                    // Article link
+                    const articleEl = document.querySelector('.update-components-article');
+                    const articleTitle = articleEl?.querySelector('.update-components-article__title')?.textContent?.trim() || '';
+                    const articleLink = articleEl?.querySelector('a')?.href || '';
+
+                    // Hashtags
+                    const hashtags = [];
+                    document.querySelectorAll('a[href*="hashtag"]').forEach(a => {
+                        hashtags.push(a.textContent.trim());
+                    });
 
                     return {
                         authorName,
                         authorHeadline,
-                        postText: postText || fallbackText,
+                        postText,
                         timestamp,
-                        likeCount,
-                        commentCount,
+                        likeCount: parseCount(reactionsEl),
+                        commentCount: parseCount(commentsEl),
                         images,
+                        videoUrl: videoUrl || null,
                         articleTitle,
                         articleLink,
+                        hashtags,
                         pageTitle: document.title,
                     };
                 });
@@ -97,7 +140,6 @@ Actor.main(async () => {
                     url: originalUrl,
                     success: !!(data.postText || data.authorName),
                     ...data,
-                    loginWallDetected: !!loginWall,
                     fetchedAt: new Date().toISOString(),
                 };
 
@@ -105,7 +147,12 @@ Actor.main(async () => {
                     log.info(`✅ ${data.authorName}: ${data.postText.substring(0, 80)}...`);
                 } else {
                     log.warning(`⚠️ Could not extract content. Page title: ${data.pageTitle}`);
-                    result.error = 'Could not extract post content — may require login';
+                    // Take a screenshot for debugging
+                    const screenshot = await page.screenshot({ fullPage: false });
+                    const key = `debug-${Date.now()}.png`;
+                    await Actor.setValue(key, screenshot, { contentType: 'image/png' });
+                    log.info(`Debug screenshot saved as ${key}`);
+                    result.error = 'Could not extract post content';
                 }
 
                 await Actor.pushData(result);
@@ -121,30 +168,20 @@ Actor.main(async () => {
             },
         });
 
-        const requests = urls.map(url => ({
-            url,
-            userData: { originalUrl: url },
-        }));
-
-        await crawler.run(requests);
+        await crawler.run(urls.map(url => ({ url, userData: { originalUrl: url } })));
         return;
     }
 
     // ── Mode 2: Profile posts ──
     let username = profileUrl || input.username;
     if (!username) {
-        throw new Error(
-            'No input provided. Use one of:\n' +
-            '  - "profileUrl": LinkedIn profile URL or username\n' +
-            '  - "postUrl": single LinkedIn post URL\n' +
-            '  - "postUrls": array of LinkedIn post URLs'
-        );
+        throw new Error('Provide postUrl, postUrls, or profileUrl');
     }
 
     const match = username.match(/linkedin\.com\/in\/([^/?#]+)/);
     if (match) username = match[1];
 
-    console.log(`Fetching recent posts for profile: ${username}`);
+    console.log(`Fetching ${count} posts for: ${username}`);
 
     const crawler = new PlaywrightCrawler({
         proxyConfiguration,
@@ -153,50 +190,74 @@ Actor.main(async () => {
         browserPoolOptions: {
             useFingerprints: true,
         },
+        preNavigationHooks: [
+            async ({ page }) => {
+                await page.context().addCookies(cookies);
+            },
+        ],
         async requestHandler({ page, log }) {
             log.info(`Loading activity page for: ${username}`);
 
-            // Wait for posts to load
             await page.waitForSelector('.scaffold-finite-scroll__content, .profile-creator-shared-feed-update', {
                 timeout: 20000,
             }).catch(() => {});
 
-            // Scroll a few times to load more posts
-            for (let i = 0; i < 3; i++) {
-                await page.evaluate(() => window.scrollBy(0, 1500));
+            // Scroll to load more posts
+            let lastCount = 0;
+            for (let i = 0; i < 5; i++) {
+                await page.evaluate(() => window.scrollBy(0, 2000));
                 await page.waitForTimeout(2000);
+                const currentCount = await page.evaluate(() => 
+                    document.querySelectorAll('.feed-shared-update-v2').length
+                );
+                if (currentCount >= count || currentCount === lastCount) break;
+                lastCount = currentCount;
             }
 
             const posts = await page.evaluate((maxCount) => {
                 const results = [];
-                const postEls = document.querySelectorAll('.feed-shared-update-v2, .profile-creator-shared-feed-update__container, [data-urn]');
+                const postEls = document.querySelectorAll('.feed-shared-update-v2');
                 
                 for (let i = 0; i < Math.min(postEls.length, maxCount); i++) {
                     const el = postEls[i];
-                    const textEl = el.querySelector('.feed-shared-text, .update-components-text, .break-words');
-                    const timeEl = el.querySelector('time, .update-components-actor__sub-description');
-                    const linkEl = el.querySelector('a[href*="activity"]');
-                    const likesEl = el.querySelector('.social-details-social-counts__reactions-count');
                     
+                    // Text
+                    const textEl = el.querySelector('.update-components-text .break-words');
                     const text = textEl ? textEl.textContent.trim() : '';
                     if (!text) continue;
 
-                    results.push({
-                        postText: text,
-                        timestamp: timeEl ? (timeEl.getAttribute('datetime') || timeEl.textContent.trim()) : '',
-                        url: linkEl ? linkEl.href : '',
-                        likeCount: likesEl ? parseInt(likesEl.textContent.replace(/[^0-9]/g, '') || '0') : 0,
-                    });
+                    // Time
+                    const timeEl = el.querySelector('.update-components-actor__sub-description span[aria-hidden="true"]');
+                    const timestamp = timeEl ? timeEl.textContent.trim() : '';
+
+                    // Post URL
+                    const urnEl = el.closest('[data-urn]');
+                    const urn = urnEl ? urnEl.getAttribute('data-urn') : '';
+                    const activityMatch = urn ? urn.match(/:(\d+)$/) : null;
+                    const postUrl = activityMatch 
+                        ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityMatch[1]}/`
+                        : '';
+
+                    // Reactions
+                    const reactionsEl = el.querySelector('.social-details-social-counts__reactions-count');
+                    const likeCount = reactionsEl ? parseInt(reactionsEl.textContent.replace(/[^0-9]/g, '') || '0') : 0;
+
+                    // Hashtags
+                    const hashtags = [];
+                    el.querySelectorAll('a[href*="hashtag"]').forEach(a => hashtags.push(a.textContent.trim()));
+
+                    results.push({ postText: text, timestamp, url: postUrl, likeCount, hashtags });
                 }
                 return results;
             }, count);
 
             if (posts.length === 0) {
-                log.warning('No posts found — LinkedIn may require login for this profile');
+                log.warning('No posts found');
+                const screenshot = await page.screenshot({ fullPage: false });
+                await Actor.setValue('debug-profile.png', screenshot, { contentType: 'image/png' });
                 await Actor.pushData({
-                    error: 'No posts found. Profile may be private or requires authentication.',
+                    error: 'No posts found. Check debug screenshot in key-value store.',
                     username,
-                    suggestion: 'Try individual post URLs with postUrl/postUrls parameter.',
                     fetchedAt: new Date().toISOString(),
                 });
                 return;
