@@ -174,19 +174,22 @@ async def main():
         if email and password:
             logger.info('🔐 Authenticating with email/password (Android API)...')
             
-            # Use Apify residential proxy if available, otherwise direct
+            # Use proxy if provided in input, otherwise direct connection
             import os
-            apify_token = os.environ.get('APIFY_PROXY_PASSWORD', '')
+            proxy_url = actor_input.get('proxyUrl', '')
             proxies = {}
-            if apify_token:
-                proxy_url = f'http://groups-RESIDENTIAL,country-US:{apify_token}@proxy.apify.com:8000'
+            if proxy_url:
                 proxies = {'http': proxy_url, 'https': proxy_url}
-                logger.info(f'🌐 Using Apify residential proxy')
+                logger.info(f'🌐 Using custom proxy')
             else:
-                logger.info('🌐 No proxy configured, using direct connection')
-                # Log available env vars for debugging
-                proxy_vars = {k: v[:15]+'...' for k, v in os.environ.items() if 'PROXY' in k.upper() or 'TOKEN' in k.upper() or 'APIFY' in k.upper()}
-                logger.info(f'  Env vars: {json.dumps(proxy_vars)}')
+                # Try Apify datacenter proxy as fallback
+                apify_token = os.environ.get('APIFY_PROXY_PASSWORD', '')
+                if apify_token:
+                    dc_proxy = f'http://auto:{apify_token}@proxy.apify.com:8000'
+                    proxies = {'http': dc_proxy, 'https': dc_proxy}
+                    logger.info(f'🌐 Using Apify datacenter proxy')
+                else:
+                    logger.info('🌐 Direct connection (no proxy)')
             
             try:
                 api = Linkedin(email, password, proxies=proxies)
