@@ -97,7 +97,7 @@ Actor.main(async () => {
                 const feedTitle = await page.title();
                 log.info(`Feed page title: ${feedTitle}`);
 
-                if (feedTitle.includes('Log In') || feedTitle.includes('Sign In') || feedTitle === 'LinkedIn') {
+                if (feedTitle.toLowerCase().includes('log in') || feedTitle.toLowerCase().includes('sign in')) {
                     log.error('❌ Not logged in — cookie may be invalid');
                     const screenshot = await page.screenshot({ fullPage: false });
                     await Actor.setValue(`debug-feed-${Date.now()}.png`, screenshot, { contentType: 'image/png' });
@@ -111,8 +111,17 @@ Actor.main(async () => {
                 }
 
                 log.info(`Step 2: Navigating to post...`);
-                // Now navigate to the actual post
-                await page.goto(targetUrl, { 
+                
+                // Convert /posts/ URL to /feed/update/ format if needed
+                // LinkedIn /posts/ URLs are client-side routes that 404 on server nav
+                let navUrl = targetUrl;
+                const activityMatch = targetUrl.match(/activity-(\d+)/);
+                if (activityMatch) {
+                    navUrl = `https://www.linkedin.com/feed/update/urn:li:activity:${activityMatch[1]}/`;
+                    log.info(`Converted to feed URL: ${navUrl}`);
+                }
+                
+                await page.goto(navUrl, { 
                     waitUntil: 'domcontentloaded',
                     timeout: 30000 
                 });
