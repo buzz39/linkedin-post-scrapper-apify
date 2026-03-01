@@ -110,13 +110,17 @@ Actor.main(async () => {
     const { chromium } = require('playwright');
 
     const proxyUrl = await proxyConfiguration.newUrl();
-    const [protocol, rest] = proxyUrl.split('://');
-    const [proxyAuth, hostPort] = rest.split('@');
-    const [proxyUser, proxyPass] = proxyAuth.split(':');
+    // Parse proxy URL robustly: http://user:pass@host:port
+    const proxyUrlObj = new URL(proxyUrl);
+    const proxyServer = `${proxyUrlObj.protocol}//${proxyUrlObj.host}`;
+    const proxyUser = decodeURIComponent(proxyUrlObj.username);
+    const proxyPass = decodeURIComponent(proxyUrlObj.password);
+    
+    console.log(`🌐 Proxy: ${proxyServer} (user: ${proxyUser.substring(0, 10)}...)`);
 
     const browser = await chromium.launch({
         headless: true,
-        proxy: { server: `${protocol}://${hostPort}`, username: proxyUser, password: proxyPass },
+        proxy: { server: proxyServer, username: proxyUser, password: proxyPass },
         args: ['--disable-blink-features=AutomationControlled', '--disable-features=IsolateOrigins,site-per-process'],
     });
 
