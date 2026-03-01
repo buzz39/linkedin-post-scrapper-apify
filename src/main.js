@@ -91,7 +91,7 @@ async function extractPostData(page, originalUrl) {
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
-    const { postUrl, postUrls, li_at, jsessionid, email, password } = input;
+    const { postUrl, postUrls, li_at, jsessionid, email, password, otp } = input;
 
     if (!li_at && !email) throw new Error('Provide either li_at cookie OR email+password for login');
 
@@ -175,14 +175,53 @@ Actor.main(async () => {
             console.log(`  Post-login URL: ${loginUrl}`);
 
             if (loginUrl.includes('checkpoint') || loginUrl.includes('challenge')) {
-                console.error('❌ LinkedIn requires verification (CAPTCHA/OTP)');
-                const screenshot = await page.screenshot({ fullPage: true });
-                await Actor.setValue('debug-challenge.png', screenshot, { contentType: 'image/png' });
-                for (const url of urls) {
-                    await Actor.pushData({ url, success: false, error: 'Verification challenge required', fetchedAt: new Date().toISOString() });
+                if (otp) {
+                    console.log('🔑 Entering OTP verification code...');
+                    await page.waitForTimeout(1000);
+                    
+                    // Find and fill OTP input
+                    const otpInput = page.locator('input[name="pin"], input#input__email_verification_pin, input[type="text"]').first();
+                    await otpInput.click();
+                    await page.waitForTimeout(300);
+                    for (const char of otp) {
+                        await otpInput.type(char, { delay: 80 + Math.random() * 50 });
+                    }
+                    
+                    await page.waitForTimeout(500);
+                    await page.locator('button[type="submit"], button#email-pin-submit-button').first().click();
+                    
+                    await page.waitForTimeout(3000);
+                    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+                    
+                    const postOtpUrl = page.url();
+                    console.log(`  Post-OTP URL: ${postOtpUrl}`);
+                    
+                    if (postOtpUrl.includes('feed')) {
+                        console.log('✅ OTP verified! Login successful!');
+                    } else if (postOtpUrl.includes('checkpoint') || postOtpUrl.includes('challenge')) {
+                        console.error('❌ OTP failed or another challenge appeared');
+                        const screenshot = await page.screenshot({ fullPage: true });
+                        await Actor.setValue('debug-otp-fail.png', screenshot, { contentType: 'image/png' });
+                        for (const url of urls) {
+                            await Actor.pushData({ url, success: false, error: 'OTP verification failed', fetchedAt: new Date().toISOString() });
+                        }
+                        await browser.close();
+                        return;
+                    } else {
+                        console.log(`⚠️ Unexpected post-OTP URL: ${postOtpUrl}`);
+                        const screenshot = await page.screenshot();
+                        await Actor.setValue('debug-post-otp.png', screenshot, { contentType: 'image/png' });
+                    }
+                } else {
+                    console.error('❌ LinkedIn requires verification (CAPTCHA/OTP). Pass otp parameter.');
+                    const screenshot = await page.screenshot({ fullPage: true });
+                    await Actor.setValue('debug-challenge.png', screenshot, { contentType: 'image/png' });
+                    for (const url of urls) {
+                        await Actor.pushData({ url, success: false, error: 'Verification challenge required — pass otp parameter', fetchedAt: new Date().toISOString() });
+                    }
+                    await browser.close();
+                    return;
                 }
-                await browser.close();
-                return;
             }
 
             if (loginUrl.includes('feed')) {

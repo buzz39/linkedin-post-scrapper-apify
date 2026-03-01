@@ -66,6 +66,12 @@
       "description": "Password for login",
       "editor": "textfield",
       "isSecret": true
+    },
+    "otp": {
+      "title": "OTP Verification Code",
+      "type": "string",
+      "description": "Email verification code from LinkedIn (if challenge triggered)",
+      "editor": "textfield"
     }
   },
   "required": []
