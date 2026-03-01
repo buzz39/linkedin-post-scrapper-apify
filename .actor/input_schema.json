@@ -53,9 +53,20 @@
       "description": "Your LinkedIn JSESSIONID cookie (optional but recommended)",
       "editor": "textfield",
       "isSecret": true
+    },
+    "email": {
+      "title": "LinkedIn Email",
+      "type": "string",
+      "description": "Email for login (alternative to li_at cookie)",
+      "editor": "textfield"
+    },
+    "password": {
+      "title": "LinkedIn Password",
+      "type": "string",
+      "description": "Password for login",
+      "editor": "textfield",
+      "isSecret": true
     }
   },
-  "required": [
-    "li_at"
-  ]
+  "required": []
 }
