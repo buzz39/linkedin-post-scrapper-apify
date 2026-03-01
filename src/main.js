@@ -200,159 +200,185 @@ Actor.main(async () => {
         countryCode: 'US',
     });
 
-    const crawler = new PlaywrightCrawler({
-        proxyConfiguration,
-        maxRequestRetries: 2,
-        requestHandlerTimeoutSecs: 60,
-        browserPoolOptions: {
-            maxOpenPagesPerBrowser: 1,
-            retireBrowserAfterPageCount: 3,
-        },
-        launchContext: {
-            launchOptions: {
-                headless: true,
-                args: [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                ],
-            },
-        },
-        preNavigationHooks: [
-            async ({ page, request }, gotoOptions) => {
-                // Remove webdriver flag
-                await page.addInitScript(() => {
-                    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-                    // Fake Chrome runtime
-                    window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
-                    // Fake plugins
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5],
-                    });
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en'],
-                    });
-                });
+    // Use Playwright directly (not PlaywrightCrawler) for better control
+    const { chromium } = require('playwright');
 
-                // Inject li_at cookie into browser context
-                const context = page.context();
-                await context.addCookies([
-                    {
-                        name: 'li_at',
-                        value: request.userData.li_at,
-                        domain: '.linkedin.com',
-                        path: '/',
-                        httpOnly: true,
-                        secure: true,
-                        sameSite: 'None',
-                    },
-                    {
-                        name: 'JSESSIONID',
-                        value: `"ajax:${Date.now()}"`,
-                        domain: '.linkedin.com',
-                        path: '/',
-                        httpOnly: false,
-                        secure: true,
-                        sameSite: 'None',
-                    },
-                    {
-                        name: 'lang',
-                        value: 'v=2&lang=en-us',
-                        domain: '.linkedin.com',
-                        path: '/',
-                        secure: true,
-                        sameSite: 'None',
-                    },
-                ]);
-            },
+    const proxyUrl = await proxyConfiguration.newUrl();
+    const [protocol, rest] = proxyUrl.split('://');
+    const [auth, hostPort] = rest.split('@');
+    const [username, password] = auth.split(':');
+
+    const browser = await chromium.launch({
+        headless: true,
+        proxy: {
+            server: `${protocol}://${hostPort}`,
+            username,
+            password,
+        },
+        args: [
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process',
         ],
+    });
 
-        requestHandler: async ({ page, request, log }) => {
-            const originalUrl = request.userData.originalUrl;
-            const feedUrl = request.url;
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        viewport: { width: 1920, height: 1080 },
+        locale: 'en-US',
+    });
 
-            log.info(`Navigating to: ${feedUrl}`);
+    // Inject cookies BEFORE any navigation
+    await context.addCookies([
+        {
+            name: 'li_at',
+            value: li_at,
+            domain: '.linkedin.com',
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'None',
+        },
+        {
+            name: 'JSESSIONID',
+            value: `"ajax:${Date.now()}"`,
+            domain: '.linkedin.com',
+            path: '/',
+            httpOnly: false,
+            secure: true,
+            sameSite: 'None',
+        },
+        {
+            name: 'lang',
+            value: 'v=2&lang=en-us',
+            domain: '.linkedin.com',
+            path: '/',
+            secure: true,
+            sameSite: 'None',
+        },
+    ]);
 
-            // Wait for the page to load
-            await page.waitForLoadState('domcontentloaded');
-            await page.waitForTimeout(2000 + Math.random() * 2000);
+    const page = await context.newPage();
 
-            // Check if we're on a login page
-            const currentUrl = page.url();
-            if (currentUrl.includes('login') || currentUrl.includes('authwall') || currentUrl.includes('signup')) {
-                log.error('Redirected to login page — cookie is invalid or expired');
-                
-                // Save screenshot for debugging
-                const screenshot = await page.screenshot({ fullPage: false });
-                await Actor.setValue(`debug-login-${request.userData.activityId}.png`, screenshot, { contentType: 'image/png' });
-                
+    // Anti-detection
+    await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    });
+
+    try {
+        // Step 1: Load LinkedIn feed first to establish session
+        console.log('🔐 Step 1: Loading LinkedIn feed to establish session...');
+        const feedResponse = await page.goto('https://www.linkedin.com/feed/', {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000,
+        });
+
+        const feedUrl = page.url();
+        console.log(`  Current URL: ${feedUrl} (status: ${feedResponse?.status()})`);
+
+        if (feedUrl.includes('login') || feedUrl.includes('authwall') || feedUrl.includes('signup')) {
+            console.error('❌ Cookie is invalid — redirected to login');
+            const screenshot = await page.screenshot();
+            await Actor.setValue('debug-login.png', screenshot, { contentType: 'image/png' });
+            
+            // Check if cookie was killed
+            const cookies = await context.cookies('https://www.linkedin.com');
+            const liAt = cookies.find(c => c.name === 'li_at');
+            console.error(`  li_at cookie value: ${liAt?.value?.substring(0, 20)}...`);
+            
+            for (const url of urls) {
                 await Actor.pushData({
-                    url: originalUrl,
+                    url,
                     success: false,
-                    error: 'Redirected to login — li_at cookie is invalid or expired',
+                    error: 'li_at cookie is invalid or expired — redirected to login',
+                    cookieStatus: liAt?.value?.includes('delete') ? 'KILLED' : 'present',
                     fetchedAt: new Date().toISOString(),
                 });
-                return;
             }
+            await browser.close();
+            return;
+        }
 
-            // Wait for post content to render
+        console.log('✅ Session established! On feed page.');
+        await page.waitForTimeout(2000 + Math.random() * 2000);
+
+        // Step 2: Navigate to each post
+        for (const url of urls) {
+            const activityId = extractActivityId(url);
+            const postUrl = toFeedUrl(url);
+            console.log(`\n📝 Step 2: Navigating to post: ${postUrl}`);
+
             try {
-                await page.waitForSelector(
-                    '.update-components-text, .feed-shared-text__text-view, .feed-shared-update-v2__description',
-                    { timeout: 15000 }
-                );
-            } catch {
-                log.warning('Post text selector not found, trying to extract anyway...');
+                await page.goto(postUrl, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 30000,
+                });
+
+                const currentUrl = page.url();
+                console.log(`  Current URL: ${currentUrl}`);
+
+                if (currentUrl.includes('login') || currentUrl.includes('authwall')) {
+                    console.error('  ❌ Redirected to login on post page');
+                    await Actor.pushData({
+                        url,
+                        success: false,
+                        error: 'Redirected to login when accessing post',
+                        fetchedAt: new Date().toISOString(),
+                    });
+                    continue;
+                }
+
+                // Wait for post content
+                try {
+                    await page.waitForSelector(
+                        '.update-components-text, .feed-shared-text__text-view, .feed-shared-update-v2__description',
+                        { timeout: 15000 }
+                    );
+                } catch {
+                    console.log('  ⚠️ Post text selector not found, extracting anyway...');
+                }
+
+                await page.waitForTimeout(1000);
+
+                const result = await extractPostData(page, url);
+
+                if (result.success) {
+                    console.log(`  ✅ ${result.authorName}: ${result.postText.substring(0, 80)}...`);
+                } else {
+                    console.log('  ⚠️ Content extraction failed, saving debug data');
+                    const screenshot = await page.screenshot({ fullPage: true });
+                    await Actor.setValue(`debug-post-${activityId}.png`, screenshot, { contentType: 'image/png' });
+                    const html = await page.content();
+                    await Actor.setValue(`debug-post-${activityId}.html`, html, { contentType: 'text/html' });
+                    result.error = 'Post loaded but content extraction failed';
+                    result.currentUrl = currentUrl;
+                }
+
+                await Actor.pushData(result);
+            } catch (e) {
+                console.error(`  ❌ Failed: ${e.message}`);
+                const screenshot = await page.screenshot().catch(() => null);
+                if (screenshot) {
+                    await Actor.setValue(`debug-error-${activityId}.png`, screenshot, { contentType: 'image/png' });
+                }
+                await Actor.pushData({
+                    url,
+                    success: false,
+                    error: e.message,
+                    fetchedAt: new Date().toISOString(),
+                });
             }
 
-            // Small delay for dynamic content
-            await page.waitForTimeout(1000);
-
-            // Extract post data from DOM
-            const result = await extractPostData(page, originalUrl);
-
-            if (result.success) {
-                log.info(`✅ ${result.authorName}: ${result.postText.substring(0, 80)}...`);
-            } else {
-                log.warning('Could not extract post content, saving debug screenshot');
-                const screenshot = await page.screenshot({ fullPage: true });
-                await Actor.setValue(`debug-nodata-${request.userData.activityId}.png`, screenshot, { contentType: 'image/png' });
-                
-                // Save HTML too
-                const html = await page.content();
-                await Actor.setValue(`debug-nodata-${request.userData.activityId}.html`, html, { contentType: 'text/html' });
-                
-                result.error = 'Post loaded but content extraction failed — check debug screenshots';
-                result.currentUrl = currentUrl;
+            // Delay between posts
+            if (urls.indexOf(url) < urls.length - 1) {
+                await page.waitForTimeout(2000 + Math.random() * 3000);
             }
-
-            await Actor.pushData(result);
-        },
-
-        failedRequestHandler: async ({ request, log }) => {
-            log.error(`Failed: ${request.url} — ${request.errorMessages.join(', ')}`);
-            await Actor.pushData({
-                url: request.userData.originalUrl,
-                success: false,
-                error: request.errorMessages.join(', '),
-                fetchedAt: new Date().toISOString(),
-            });
-        },
-    });
-
-    // Build requests — navigate to feed URL format
-    const requests = urls.map(url => {
-        const activityId = extractActivityId(url);
-        return {
-            url: toFeedUrl(url),
-            userData: {
-                originalUrl: url,
-                activityId: activityId || 'unknown',
-                li_at,
-            },
-        };
-    });
-
-    await crawler.run(requests);
+        }
+    } finally {
+        await browser.close();
+    }
 
     console.log('\n✅ Done!');
 });
