@@ -199,13 +199,19 @@ async def main():
                 return
         elif li_at:
             logger.info('🔐 Using li_at cookie...')
-            from requests.cookies import RequestsCookieJar
-            cookies = RequestsCookieJar()
-            cookies.set('li_at', li_at, domain='.linkedin.com', path='/')
-            jsessionid = actor_input.get('jsessionid', f'"ajax:{int(datetime.utcnow().timestamp() * 1000)}"')
-            cookies.set('JSESSIONID', jsessionid, domain='.linkedin.com', path='/')
+            jsessionid = actor_input.get('jsessionid', '')
+            if not jsessionid:
+                raise ValueError('jsessionid is required when using li_at cookie')
             
+            # Strip quotes if present
+            jsessionid_clean = jsessionid.strip('"')
+            
+            cookies = {'li_at': li_at, 'JSESSIONID': f'"{jsessionid_clean}"'}
             api = Linkedin('', '', authenticate=False, cookies=cookies)
+            
+            # Set csrf-token header (critical for Voyager API)
+            api.client.session.headers['csrf-token'] = jsessionid_clean
+            api.client.session.headers['x-restli-protocol-version'] = '2.0.0'
             logger.info('✅ Cookie session created')
         else:
             raise ValueError('Provide email+password OR li_at cookie')
