@@ -1,7 +1,5 @@
 const { Actor } = require('apify');
-const { CheerioCrawler, ProxyConfiguration } = require('crawlee');
-
-const EMBED_URL = 'https://www.linkedin.com/embed/feed/update';
+const { PlaywrightCrawler, ProxyConfiguration } = require('crawlee');
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
@@ -12,73 +10,104 @@ Actor.main(async () => {
     if (postUrl) urls.push(postUrl);
     if (Array.isArray(postUrls)) urls.push(...postUrls);
 
-    // ── Mode 1: Scrape individual posts via embed endpoint (no auth needed) ──
+    const proxyConfiguration = await Actor.createProxyConfiguration({
+        groups: ['RESIDENTIAL'],
+        countryCode: 'US',
+    });
+
+    // ── Mode 1: Scrape individual posts ──
     if (urls.length > 0) {
-        console.log(`Fetching ${urls.length} post(s) via embed endpoint...`);
+        console.log(`Fetching ${urls.length} post(s) via browser...`);
 
-        const proxyConfiguration = await Actor.createProxyConfiguration({
-            groups: ['RESIDENTIAL'],
-            countryCode: 'US',
-        });
-
-        const crawler = new CheerioCrawler({
+        const crawler = new PlaywrightCrawler({
             proxyConfiguration,
-            maxConcurrency: 3,
-            requestHandlerTimeoutSecs: 30,
-            async requestHandler({ request, $, response }) {
+            maxConcurrency: 2,
+            requestHandlerTimeoutSecs: 60,
+            browserPoolOptions: {
+                useFingerprints: true,
+            },
+            async requestHandler({ request, page, log }) {
                 const originalUrl = request.userData.originalUrl;
-                const statusCode = response.statusCode;
+                log.info(`Processing: ${originalUrl}`);
 
-                if (statusCode !== 200) {
-                    console.log(`⚠️ Got ${statusCode} for: ${originalUrl}`);
-                    await Actor.pushData({
-                        url: originalUrl,
-                        success: false,
-                        error: `HTTP ${statusCode}`,
-                        fetchedAt: new Date().toISOString(),
+                // Wait for the post content to load
+                await page.waitForSelector('.feed-shared-update-v2, .scaffold-finite-scroll__content, .update-components-text', {
+                    timeout: 15000,
+                }).catch(() => {});
+
+                // Check if we hit a login wall
+                const loginWall = await page.$('.join-form, .sign-in-form, [data-tracking-control-name="public_post_join-cta"]');
+                
+                // Extract post data from the page
+                const data = await page.evaluate(() => {
+                    // Author info
+                    const authorEl = document.querySelector('.update-components-actor__title, .top-card-layout__title, .base-main-card__title');
+                    const authorName = authorEl ? authorEl.textContent.trim() : '';
+                    
+                    const headlineEl = document.querySelector('.update-components-actor__description, .top-card-layout__headline, .base-main-card__subtitle');
+                    const authorHeadline = headlineEl ? headlineEl.textContent.trim() : '';
+
+                    // Post text
+                    const textEl = document.querySelector('.feed-shared-update-v2__description, .update-components-text, .attributed-text');
+                    const postText = textEl ? textEl.textContent.trim() : '';
+
+                    // Fallback: try getting text from any visible content area
+                    const fallbackText = !postText ? (document.querySelector('.break-words, .feed-shared-text')?.textContent?.trim() || '') : postText;
+
+                    // Timestamp
+                    const timeEl = document.querySelector('.update-components-actor__sub-description, time, .top-card-layout__first-subline');
+                    const timestamp = timeEl ? timeEl.textContent.trim() : '';
+
+                    // Social counts
+                    const likesEl = document.querySelector('.social-details-social-counts__reactions-count, .social-counts-reactions');
+                    const commentsEl = document.querySelector('.social-details-social-counts__comments, .social-counts-comments');
+                    
+                    const likeCount = likesEl ? parseInt(likesEl.textContent.replace(/[^0-9]/g, '') || '0') : 0;
+                    const commentCount = commentsEl ? parseInt(commentsEl.textContent.replace(/[^0-9]/g, '') || '0') : 0;
+
+                    // Images
+                    const images = [];
+                    document.querySelectorAll('.update-components-image img, .feed-shared-image img').forEach(img => {
+                        const src = img.src || img.getAttribute('data-delayed-url');
+                        if (src && !src.includes('profile-photo') && !src.includes('/li/') && src.startsWith('http')) {
+                            images.push(src);
+                        }
                     });
-                    return;
-                }
 
-                // Parse the embed page
-                const authorName = $('.author-info__name').text().trim() ||
-                                   $('[data-tracking-control-name="public_post_feed-actor-name"]').text().trim();
-                const authorHeadline = $('.author-info__subtitle').text().trim();
-                const postText = $('.feed-item-main-content').text().trim() ||
-                                 $('.attributed-text').text().trim();
-                const timestamp = $('time').text().trim() || $('.publish-date').text().trim();
-                const likeCount = extractNumber($('.social-counts-reactions__social-counts-numLikes').text());
-                const commentCount = extractNumber($('.social-counts-comments').text());
-                const repostCount = extractNumber($('.social-counts-reposts').text());
+                    // Article/link preview
+                    const articleEl = document.querySelector('.update-components-article__title, .feed-shared-article__title');
+                    const articleTitle = articleEl ? articleEl.textContent.trim() : '';
+                    const articleLink = document.querySelector('.update-components-article a, .feed-shared-article a')?.href || '';
 
-                // Extract images
-                const images = [];
-                $('img[data-delayed-url], img.update-components-image__image').each((i, el) => {
-                    const src = $(el).attr('data-delayed-url') || $(el).attr('src');
-                    if (src && !src.includes('profile-photo') && !src.includes('logo')) {
-                        images.push(src);
-                    }
+                    return {
+                        authorName,
+                        authorHeadline,
+                        postText: postText || fallbackText,
+                        timestamp,
+                        likeCount,
+                        commentCount,
+                        images,
+                        articleTitle,
+                        articleLink,
+                        pageTitle: document.title,
+                    };
                 });
-
-                // Extract video if present
-                const videoUrl = $('video source').attr('src') || null;
 
                 const result = {
                     url: originalUrl,
-                    success: true,
-                    authorName,
-                    authorHeadline,
-                    postText,
-                    timestamp,
-                    likeCount,
-                    commentCount,
-                    repostCount,
-                    images,
-                    videoUrl,
+                    success: !!(data.postText || data.authorName),
+                    ...data,
+                    loginWallDetected: !!loginWall,
                     fetchedAt: new Date().toISOString(),
                 };
 
-                console.log(`✅ Fetched: ${authorName} — ${postText.substring(0, 80)}...`);
+                if (result.success) {
+                    log.info(`✅ ${data.authorName}: ${data.postText.substring(0, 80)}...`);
+                } else {
+                    log.warning(`⚠️ Could not extract content. Page title: ${data.pageTitle}`);
+                    result.error = 'Could not extract post content — may require login';
+                }
+
                 await Actor.pushData(result);
             },
             async failedRequestHandler({ request }, error) {
@@ -92,19 +121,16 @@ Actor.main(async () => {
             },
         });
 
-        const requests = urls.map(url => {
-            const embedUrl = convertToEmbedUrl(url);
-            return {
-                url: embedUrl,
-                userData: { originalUrl: url },
-            };
-        });
+        const requests = urls.map(url => ({
+            url,
+            userData: { originalUrl: url },
+        }));
 
         await crawler.run(requests);
         return;
     }
 
-    // ── Mode 2: Profile posts via public activity page ──
+    // ── Mode 2: Profile posts ──
     let username = profileUrl || input.username;
     if (!username) {
         throw new Error(
@@ -120,119 +146,73 @@ Actor.main(async () => {
 
     console.log(`Fetching recent posts for profile: ${username}`);
 
-    const proxyConfiguration = await Actor.createProxyConfiguration({
-        groups: ['RESIDENTIAL'],
-        countryCode: 'US',
-    });
-
-    // Scrape the public activity page
-    const activityUrl = `https://www.linkedin.com/in/${username}/recent-activity/all/`;
-    const crawler = new CheerioCrawler({
+    const crawler = new PlaywrightCrawler({
         proxyConfiguration,
         maxConcurrency: 1,
-        async requestHandler({ $, response }) {
-            if (response.statusCode !== 200) {
-                throw new Error(`LinkedIn returned ${response.statusCode}`);
+        requestHandlerTimeoutSecs: 90,
+        browserPoolOptions: {
+            useFingerprints: true,
+        },
+        async requestHandler({ page, log }) {
+            log.info(`Loading activity page for: ${username}`);
+
+            // Wait for posts to load
+            await page.waitForSelector('.scaffold-finite-scroll__content, .profile-creator-shared-feed-update', {
+                timeout: 20000,
+            }).catch(() => {});
+
+            // Scroll a few times to load more posts
+            for (let i = 0; i < 3; i++) {
+                await page.evaluate(() => window.scrollBy(0, 1500));
+                await page.waitForTimeout(2000);
             }
 
-            // LinkedIn renders activity page server-side with post data in script tags
-            const scriptTags = $('script[type="application/ld+json"]').toArray();
-            let posts = [];
+            const posts = await page.evaluate((maxCount) => {
+                const results = [];
+                const postEls = document.querySelectorAll('.feed-shared-update-v2, .profile-creator-shared-feed-update__container, [data-urn]');
+                
+                for (let i = 0; i < Math.min(postEls.length, maxCount); i++) {
+                    const el = postEls[i];
+                    const textEl = el.querySelector('.feed-shared-text, .update-components-text, .break-words');
+                    const timeEl = el.querySelector('time, .update-components-actor__sub-description');
+                    const linkEl = el.querySelector('a[href*="activity"]');
+                    const likesEl = el.querySelector('.social-details-social-counts__reactions-count');
+                    
+                    const text = textEl ? textEl.textContent.trim() : '';
+                    if (!text) continue;
 
-            // Try to extract from LD+JSON
-            for (const tag of scriptTags) {
-                try {
-                    const data = JSON.parse($(tag).html());
-                    if (data['@type'] === 'Article' || data['@type'] === 'SocialMediaPosting') {
-                        posts.push({
-                            url: data.url || activityUrl,
-                            authorName: data.author?.name || username,
-                            postText: data.articleBody || data.description || '',
-                            timestamp: data.datePublished || '',
-                            success: true,
-                            fetchedAt: new Date().toISOString(),
-                        });
-                    }
-                } catch (e) { /* skip invalid JSON */ }
-            }
-
-            // Fallback: parse from HTML
-            if (posts.length === 0) {
-                // LinkedIn's public page has <li> items with post content
-                $('div.feed-shared-update-v2, li.profile-creator-shared-feed-update__container').each((i, el) => {
-                    if (i >= count) return false;
-                    const $el = $(el);
-                    const text = $el.find('.feed-shared-text__text-view, .break-words').text().trim();
-                    const postLink = $el.find('a[href*="activity"]').attr('href') || '';
-                    const time = $el.find('time').attr('datetime') || $el.find('.feed-shared-actor__sub-description').text().trim();
-
-                    if (text) {
-                        posts.push({
-                            url: postLink.startsWith('http') ? postLink : `https://www.linkedin.com${postLink}`,
-                            authorName: username,
-                            postText: text,
-                            timestamp: time,
-                            success: true,
-                            fetchedAt: new Date().toISOString(),
-                        });
-                    }
-                });
-            }
+                    results.push({
+                        postText: text,
+                        timestamp: timeEl ? (timeEl.getAttribute('datetime') || timeEl.textContent.trim()) : '',
+                        url: linkEl ? linkEl.href : '',
+                        likeCount: likesEl ? parseInt(likesEl.textContent.replace(/[^0-9]/g, '') || '0') : 0,
+                    });
+                }
+                return results;
+            }, count);
 
             if (posts.length === 0) {
-                // Last resort: dump what we can see
-                console.log('⚠️ Could not parse posts from page. LinkedIn may require JS rendering.');
-                console.log('Page title:', $('title').text());
+                log.warning('No posts found — LinkedIn may require login for this profile');
                 await Actor.pushData({
-                    error: 'Could not parse posts. Profile may be private or LinkedIn requires browser rendering.',
+                    error: 'No posts found. Profile may be private or requires authentication.',
                     username,
-                    suggestion: 'Try using postUrl/postUrls with specific post URLs instead — the embed endpoint is more reliable.',
+                    suggestion: 'Try individual post URLs with postUrl/postUrls parameter.',
                     fetchedAt: new Date().toISOString(),
                 });
                 return;
             }
 
-            console.log(`✅ Found ${posts.length} posts for ${username}`);
-            for (const post of posts.slice(0, count)) {
-                await Actor.pushData(post);
+            log.info(`✅ Found ${posts.length} posts for ${username}`);
+            for (const post of posts) {
+                await Actor.pushData({
+                    ...post,
+                    authorUsername: username,
+                    success: true,
+                    fetchedAt: new Date().toISOString(),
+                });
             }
         },
     });
 
-    await crawler.run([activityUrl]);
+    await crawler.run([`https://www.linkedin.com/in/${username}/recent-activity/all/`]);
 });
-
-
-// ── Helpers ──
-
-function convertToEmbedUrl(url) {
-    // Extract activity ID from various LinkedIn URL formats
-    let activityId = null;
-
-    // Format: /posts/username_text-activity-1234567890-xxx/
-    const activityMatch = url.match(/activity[:-](\d+)/);
-    if (activityMatch) {
-        activityId = activityMatch[1];
-    }
-
-    if (activityId) {
-        // Try both share and ugcPost URN formats — share is more common for embed
-        return `${EMBED_URL}/urn:li:share:${activityId}`;
-    }
-
-    // If we can't parse it, try the URL as-is with embed
-    const ugcMatch = url.match(/ugcPost[:-](\d+)/);
-    if (ugcMatch) {
-        return `${EMBED_URL}/urn:li:ugcPost:${ugcMatch[1]}`;
-    }
-
-    // Fallback: return original (will likely fail gracefully)
-    return url;
-}
-
-function extractNumber(text) {
-    if (!text) return 0;
-    const cleaned = text.replace(/,/g, '').trim();
-    const match = cleaned.match(/(\d+)/);
-    return match ? parseInt(match[1], 10) : 0;
-}

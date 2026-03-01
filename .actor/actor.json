@@ -4,8 +4,9 @@
     "title": "LinkedIn Post Scraper — No Cookies Needed",
     "description": "Scrape LinkedIn profile posts at scale. Get full post text, author info, engagement stats (likes, comments, reposts), media, hashtags. No cookies or login required. Supports profile URLs, usernames, and individual post URLs.",
     "version": "0.3",
+    "dockerfile": "../Dockerfile",
     "meta": {
-        "templateId": "js-start"
+        "templateId": "js-playwright-chrome"
     },
     "input": "./input_schema.json",
     "seoTitle": "LinkedIn Post Scraper API — Extract Posts & Engagement Data",
