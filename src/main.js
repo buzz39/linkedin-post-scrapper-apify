@@ -58,14 +58,26 @@ async function voyagerGet(path, { li_at, jsessionid, proxyUrl }) {
             'cookie': cookieStr,
         },
         timeout: 30000,
+        maxRedirects: 5,
     };
 
     if (proxyUrl) {
         config.httpsAgent = new HttpsProxyAgent(proxyUrl);
     }
 
-    const response = await axios(config);
-    return response.data;
+    try {
+        const response = await axios(config);
+        return response.data;
+    } catch (e) {
+        // If proxy fails, retry without proxy
+        if (proxyUrl && (e.message.includes('redirect') || e.message.includes('TUNNEL'))) {
+            console.log(`  ⚠️ Proxy failed (${e.message}), retrying without proxy...`);
+            delete config.httpsAgent;
+            const response = await axios(config);
+            return response.data;
+        }
+        throw e;
+    }
 }
 
 /**
@@ -322,64 +334,67 @@ Actor.main(async () => {
             console.log(`  Fetching activity: ${activityId}`);
 
             try {
-                // Try the feed update endpoint
                 const urn = `urn:li:activity:${activityId}`;
-                const encodedUrn = encodeURIComponent(urn);
-                
-                // Use the feed updates endpoint with the activity URN
-                const data = await voyagerGet(
-                    `/feed/updates?ids=List(${encodedUrn})`,
-                    authOpts
-                );
+                let data = null;
+                let endpointUsed = '';
+
+                // Try multiple Voyager API endpoint formats
+                const endpoints = [
+                    { path: `/feed/updates/urn:li:activity:${activityId}`, name: 'feed/updates/urn' },
+                    { path: `/feed/updates/urn:li:ugcPost:${activityId}`, name: 'feed/updates/ugcPost' },
+                    { path: `/graphql?variables=(activityUrn:${encodeURIComponent(urn)})&queryId=voyagerFeedDashActivityById.cafb67e9a5e6c2e5e3e4ebab5d675064`, name: 'graphql-activity' },
+                ];
+
+                for (const ep of endpoints) {
+                    try {
+                        console.log(`  Trying ${ep.name}...`);
+                        data = await voyagerGet(ep.path, authOpts);
+                        endpointUsed = ep.name;
+                        console.log(`  ✅ ${ep.name} responded! Keys: ${Object.keys(data || {}).join(', ')}`);
+                        break;
+                    } catch (e) {
+                        const status = e.response?.status || 'no status';
+                        console.log(`  ❌ ${ep.name}: ${status} - ${e.message.substring(0, 80)}`);
+                        // Save debug info
+                        if (e.response?.data) {
+                            await Actor.setValue(`debug-${ep.name}-${activityId}.json`, 
+                                { status, data: e.response.data, headers: Object.fromEntries(Object.entries(e.response.headers || {})) },
+                                { contentType: 'application/json' });
+                        }
+                    }
+                }
+
+                if (!data) {
+                    console.log(`  ❌ All endpoints failed for ${activityId}`);
+                    await Actor.pushData({
+                        url,
+                        success: false,
+                        error: 'All Voyager API endpoints failed — cookie may be invalid or post not accessible',
+                        fetchedAt: new Date().toISOString(),
+                    });
+                    continue;
+                }
 
                 const included = data?.included || [];
                 const elements = data?.elements || (data?.results ? Object.values(data.results) : []);
 
-                if (included.length === 0 && elements.length === 0) {
-                    // Try alternative endpoint
-                    console.log('  Trying alternative endpoint...');
-                    const data2 = await voyagerGet(
-                        `/feed/updates/${encodedUrn}`,
-                        authOpts
-                    );
-                    
-                    const included2 = data2?.included || [];
-                    const result = parseUpdate(data2, included2);
-                    result.url = url;
-                    result.fetchedAt = new Date().toISOString();
-                    
-                    if (!result.success) {
-                        // Try ugcPost format
-                        console.log('  Trying ugcPost endpoint...');
-                        const data3 = await voyagerGet(
-                            `/feed/updates/urn:li:ugcPost:${activityId}`,
-                            authOpts
-                        );
-                        const result3 = parseUpdate(data3, data3?.included || []);
-                        result3.url = url;
-                        result3.fetchedAt = new Date().toISOString();
-                        await Actor.pushData(result3);
-                    } else {
-                        await Actor.pushData(result);
-                    }
-                    continue;
-                }
+                // Always save raw response for debugging
+                await Actor.setValue(`debug-raw-${activityId}.json`, data, { contentType: 'application/json' });
 
-                const result = parseUpdate(elements[0] || {}, included);
+                const result = parseUpdate(elements[0] || data, included);
                 result.url = url;
                 result.urn = result.urn || urn;
+                result.endpointUsed = endpointUsed;
                 result.fetchedAt = new Date().toISOString();
 
                 if (result.success) {
                     console.log(`  ✅ ${result.authorName}: ${result.postText.substring(0, 80)}...`);
                 } else {
-                    console.log(`  ⚠️ Parsed but no content extracted. Keys: ${Object.keys(data).join(', ')}`);
-                    // Store raw response for debugging
-                    await Actor.setValue(`debug-raw-${activityId}.json`, data, { contentType: 'application/json' });
+                    console.log(`  ⚠️ Parsed but no content extracted. Included types: ${[...new Set(included.map(i => i.$type).filter(Boolean))].join(', ')}`);
                     result.error = 'Could not parse post content from API response';
-                    result._rawKeys = Object.keys(data);
                     result._includedTypes = [...new Set(included.map(i => i.$type).filter(Boolean))];
                     result._includedCount = included.length;
+                    result._elementCount = elements.length;
                 }
 
                 await Actor.pushData(result);
