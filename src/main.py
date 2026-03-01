@@ -174,11 +174,12 @@ async def main():
         if email and password:
             logger.info('🔐 Authenticating with email/password (Android API)...')
             
-            # Get proxy URL for residential IP
-            proxy_config = await Actor.create_proxy_configuration(groups=['RESIDENTIAL'], country_code='US')
-            proxy_url = await proxy_config.new_url()
+            # Use Apify residential proxy directly
+            import os
+            apify_token = os.environ.get('APIFY_TOKEN', '')
+            proxy_url = f'http://groups-RESIDENTIAL,country-US:{apify_token}@proxy.apify.com:8000'
             proxies = {'http': proxy_url, 'https': proxy_url}
-            logger.info(f'🌐 Using residential proxy')
+            logger.info(f'🌐 Using Apify residential proxy')
             
             try:
                 api = Linkedin(email, password, proxies=proxies)
