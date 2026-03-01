@@ -174,13 +174,19 @@ async def main():
         if email and password:
             logger.info('🔐 Authenticating with email/password (Android API)...')
             
-            # Use Apify residential proxy
+            # Use Apify residential proxy if available, otherwise direct
             import os
-            # Try multiple env var names for the proxy password
-            apify_token = os.environ.get('APIFY_PROXY_PASSWORD', '') or os.environ.get('APIFY_TOKEN', '')
-            proxy_url = f'http://groups-RESIDENTIAL,country-US:{apify_token}@proxy.apify.com:8000'
-            proxies = {'http': proxy_url, 'https': proxy_url}
-            logger.info(f'🌐 Using Apify residential proxy (token: {apify_token[:10]}...)')
+            apify_token = os.environ.get('APIFY_PROXY_PASSWORD', '')
+            proxies = {}
+            if apify_token:
+                proxy_url = f'http://groups-RESIDENTIAL,country-US:{apify_token}@proxy.apify.com:8000'
+                proxies = {'http': proxy_url, 'https': proxy_url}
+                logger.info(f'🌐 Using Apify residential proxy')
+            else:
+                logger.info('🌐 No proxy configured, using direct connection')
+                # Log available env vars for debugging
+                proxy_vars = {k: v[:15]+'...' for k, v in os.environ.items() if 'PROXY' in k.upper() or 'TOKEN' in k.upper() or 'APIFY' in k.upper()}
+                logger.info(f'  Env vars: {json.dumps(proxy_vars)}')
             
             try:
                 api = Linkedin(email, password, proxies=proxies)
