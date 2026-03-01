@@ -1,9 +1,5 @@
 const { Actor } = require('apify');
-const { PlaywrightCrawler } = require('crawlee');
 
-/**
- * Extract activity ID from various LinkedIn post URL formats
- */
 function extractActivityId(url) {
     let match = url.match(/activity[- ](\d+)/i);
     if (match) return match[1];
@@ -14,180 +10,91 @@ function extractActivityId(url) {
     return null;
 }
 
-/**
- * Convert any LinkedIn post URL to the feed/update format
- */
 function toFeedUrl(url) {
     const activityId = extractActivityId(url);
-    if (activityId) {
-        return `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`;
-    }
+    if (activityId) return `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`;
     return url;
 }
 
-/**
- * Extract post data from the rendered LinkedIn page
- */
 async function extractPostData(page, originalUrl) {
     return page.evaluate((origUrl) => {
-        const result = {
-            success: false,
-            url: origUrl,
-            authorName: '',
-            authorHeadline: '',
-            authorProfileUrl: '',
-            postText: '',
-            timestamp: '',
-            likeCount: 0,
-            commentCount: 0,
-            shareCount: 0,
-            images: [],
-            videoUrl: null,
-            articleTitle: '',
-            articleLink: '',
-            hashtags: [],
-            type: 'text',
+        const r = {
+            success: false, url: origUrl,
+            authorName: '', authorHeadline: '', authorProfileUrl: '',
+            postText: '', timestamp: '',
+            likeCount: 0, commentCount: 0, shareCount: 0,
+            images: [], videoUrl: null,
+            articleTitle: '', articleLink: '',
+            hashtags: [], type: 'text',
             fetchedAt: new Date().toISOString(),
         };
 
-        // Author name
-        const authorEl = document.querySelector(
-            '.update-components-actor__name span[dir="ltr"] span[aria-hidden="true"], ' +
-            '.feed-shared-actor__name span[dir="ltr"] span[aria-hidden="true"], ' +
-            '.update-components-actor__title span[dir="ltr"] span[aria-hidden="true"], ' +
-            '.feed-shared-actor__title span'
-        );
-        if (authorEl) result.authorName = authorEl.textContent.trim();
+        const qs = (s) => document.querySelector(s);
+        const qsa = (s) => document.querySelectorAll(s);
 
-        // Author headline
-        const headlineEl = document.querySelector(
-            '.update-components-actor__description span[dir="ltr"], ' +
-            '.feed-shared-actor__description span[dir="ltr"], ' +
-            '.update-components-actor__supplementary-actor-info'
-        );
-        if (headlineEl) result.authorHeadline = headlineEl.textContent.trim();
+        // Author
+        const authorEl = qs('.update-components-actor__name span[dir="ltr"] span[aria-hidden="true"], .feed-shared-actor__name span[dir="ltr"] span[aria-hidden="true"], .feed-shared-actor__title span');
+        if (authorEl) r.authorName = authorEl.textContent.trim();
 
-        // Author profile URL
-        const authorLink = document.querySelector(
-            '.update-components-actor__container-link, ' +
-            '.feed-shared-actor__container-link, ' +
-            'a.update-components-actor__meta-link'
-        );
-        if (authorLink) result.authorProfileUrl = authorLink.href.split('?')[0];
+        const headlineEl = qs('.update-components-actor__description span[dir="ltr"], .feed-shared-actor__description span[dir="ltr"]');
+        if (headlineEl) r.authorHeadline = headlineEl.textContent.trim();
 
-        // Post text — multiple possible selectors
-        const textEl = document.querySelector(
-            '.feed-shared-update-v2__description .update-components-text, ' +
-            '.update-components-text__text-view, ' +
-            '.feed-shared-text__text-view, ' +
-            '.break-words .update-components-text, ' +
-            '[data-ad-preview="message"] span[dir="ltr"]'
-        );
-        if (textEl) {
-            result.postText = textEl.innerText.trim();
-        }
+        const authorLink = qs('.update-components-actor__container-link, .feed-shared-actor__container-link, a.update-components-actor__meta-link');
+        if (authorLink) r.authorProfileUrl = authorLink.href.split('?')[0];
+
+        // Post text
+        const textEl = qs('.feed-shared-update-v2__description .update-components-text, .update-components-text__text-view, .feed-shared-text__text-view, .break-words .update-components-text, [data-ad-preview="message"] span[dir="ltr"]');
+        if (textEl) r.postText = textEl.innerText.trim();
 
         // Timestamp
-        const timeEl = document.querySelector(
-            '.update-components-actor__sub-description span[aria-hidden="true"], ' +
-            '.feed-shared-actor__sub-description span[aria-hidden="true"], ' +
-            'time'
-        );
-        if (timeEl) {
-            result.timestamp = timeEl.getAttribute('datetime') || timeEl.textContent.trim();
-        }
+        const timeEl = qs('.update-components-actor__sub-description span[aria-hidden="true"], .feed-shared-actor__sub-description span[aria-hidden="true"], time');
+        if (timeEl) r.timestamp = timeEl.getAttribute('datetime') || timeEl.textContent.trim();
 
-        // Social counts — parse from the social bar
-        const socialBar = document.querySelector(
-            '.social-details-social-counts, ' +
-            '.feed-shared-social-counts'
-        );
+        // Social counts
+        const socialBar = qs('.social-details-social-counts, .feed-shared-social-counts');
         if (socialBar) {
-            const reactionsEl = socialBar.querySelector(
-                '.social-details-social-counts__reactions-count, ' +
-                'button[aria-label*="reaction"], button[aria-label*="like"]'
-            );
-            if (reactionsEl) {
-                const num = reactionsEl.textContent.replace(/[^0-9,]/g, '').replace(',', '');
-                result.likeCount = parseInt(num) || 0;
-            }
-
-            const commentsEl = socialBar.querySelector(
-                'button[aria-label*="comment"]'
-            );
-            if (commentsEl) {
-                const num = commentsEl.textContent.replace(/[^0-9,]/g, '').replace(',', '');
-                result.commentCount = parseInt(num) || 0;
-            }
-
-            const sharesEl = socialBar.querySelector(
-                'button[aria-label*="repost"], button[aria-label*="share"]'
-            );
-            if (sharesEl) {
-                const num = sharesEl.textContent.replace(/[^0-9,]/g, '').replace(',', '');
-                result.shareCount = parseInt(num) || 0;
-            }
+            const parse = (sel) => {
+                const el = socialBar.querySelector(sel);
+                return el ? parseInt(el.textContent.replace(/[^0-9]/g, '')) || 0 : 0;
+            };
+            r.likeCount = parse('.social-details-social-counts__reactions-count, button[aria-label*="reaction"], button[aria-label*="like"]');
+            r.commentCount = parse('button[aria-label*="comment"]');
+            r.shareCount = parse('button[aria-label*="repost"], button[aria-label*="share"]');
         }
 
         // Images
-        const imgEls = document.querySelectorAll(
-            '.update-components-image__image img, ' +
-            '.feed-shared-image__image img, ' +
-            '.update-components-linkedin-video__container img'
-        );
-        imgEls.forEach(img => {
-            if (img.src && !img.src.includes('data:')) {
-                result.images.push(img.src);
-            }
+        qsa('.update-components-image__image img, .feed-shared-image__image img').forEach(img => {
+            if (img.src && !img.src.includes('data:')) r.images.push(img.src);
         });
 
         // Video
-        const videoEl = document.querySelector(
-            'video source, video[src]'
-        );
-        if (videoEl) {
-            result.videoUrl = videoEl.src || videoEl.getAttribute('src');
-            result.type = 'video';
-        }
+        const videoEl = qs('video source, video[src]');
+        if (videoEl) { r.videoUrl = videoEl.src || videoEl.getAttribute('src'); r.type = 'video'; }
 
         // Article
-        const articleEl = document.querySelector(
-            '.update-components-article, .feed-shared-article'
-        );
+        const articleEl = qs('.update-components-article, .feed-shared-article');
         if (articleEl) {
-            const titleEl = articleEl.querySelector(
-                '.update-components-article__title, .feed-shared-article__title'
-            );
+            const titleEl = articleEl.querySelector('.update-components-article__title, .feed-shared-article__title');
             const linkEl = articleEl.querySelector('a');
-            if (titleEl) result.articleTitle = titleEl.textContent.trim();
-            if (linkEl) result.articleLink = linkEl.href;
-            result.type = 'article';
+            if (titleEl) r.articleTitle = titleEl.textContent.trim();
+            if (linkEl) r.articleLink = linkEl.href;
+            r.type = 'article';
         }
 
-        // Hashtags
-        if (result.postText) {
-            const tags = result.postText.match(/#[\w\u00C0-\u024F]+/g);
-            if (tags) result.hashtags = tags;
-        }
-
-        // Type detection
-        if (result.images.length > 0 && result.type === 'text') result.type = 'image';
-
-        result.success = !!(result.postText || result.authorName);
-        return result;
+        if (r.postText) { const tags = r.postText.match(/#[\w\u00C0-\u024F]+/g); if (tags) r.hashtags = tags; }
+        if (r.images.length > 0 && r.type === 'text') r.type = 'image';
+        r.success = !!(r.postText || r.authorName);
+        return r;
     }, originalUrl);
 }
 
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
-    const { postUrl, postUrls, li_at, jsessionid } = input;
+    const { postUrl, postUrls, li_at, jsessionid, email, password } = input;
 
-    if (!li_at) {
-        throw new Error('li_at cookie is required. Get it from DevTools → Application → Cookies → linkedin.com → li_at');
-    }
+    if (!li_at && !email) throw new Error('Provide either li_at cookie OR email+password for login');
 
-    // Collect URLs
     const urls = [];
     if (postUrl) urls.push(postUrl);
     if (Array.isArray(postUrls)) urls.push(...postUrls);
@@ -200,25 +107,17 @@ Actor.main(async () => {
         countryCode: 'US',
     });
 
-    // Use Playwright directly (not PlaywrightCrawler) for better control
     const { chromium } = require('playwright');
 
     const proxyUrl = await proxyConfiguration.newUrl();
     const [protocol, rest] = proxyUrl.split('://');
-    const [auth, hostPort] = rest.split('@');
-    const [username, password] = auth.split(':');
+    const [proxyAuth, hostPort] = rest.split('@');
+    const [proxyUser, proxyPass] = proxyAuth.split(':');
 
     const browser = await chromium.launch({
         headless: true,
-        proxy: {
-            server: `${protocol}://${hostPort}`,
-            username,
-            password,
-        },
-        args: [
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-        ],
+        proxy: { server: `${protocol}://${hostPort}`, username: proxyUser, password: proxyPass },
+        args: ['--disable-blink-features=AutomationControlled', '--disable-features=IsolateOrigins,site-per-process'],
     });
 
     const context = await browser.newContext({
@@ -226,36 +125,6 @@ Actor.main(async () => {
         viewport: { width: 1920, height: 1080 },
         locale: 'en-US',
     });
-
-    // Inject cookies BEFORE any navigation
-    await context.addCookies([
-        {
-            name: 'li_at',
-            value: li_at,
-            domain: '.linkedin.com',
-            path: '/',
-            httpOnly: true,
-            secure: true,
-            sameSite: 'None',
-        },
-        {
-            name: 'JSESSIONID',
-            value: jsessionid || `"ajax:${Date.now()}"`,
-            domain: '.linkedin.com',
-            path: '/',
-            httpOnly: false,
-            secure: true,
-            sameSite: 'None',
-        },
-        {
-            name: 'lang',
-            value: 'v=2&lang=en-us',
-            domain: '.linkedin.com',
-            path: '/',
-            secure: true,
-            sameSite: 'None',
-        },
-    ]);
 
     const page = await context.newPage();
 
@@ -268,83 +137,120 @@ Actor.main(async () => {
     });
 
     try {
-        // Step 1: Load LinkedIn feed first to establish session
-        console.log('🔐 Step 1: Loading LinkedIn feed to establish session...');
-        const feedResponse = await page.goto('https://www.linkedin.com/feed/', {
-            waitUntil: 'networkidle',
-            timeout: 45000,
-        });
+        // ===== AUTHENTICATION =====
+        if (email && password) {
+            console.log('🔐 Logging in with email/password...');
+            await page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle', timeout: 30000 });
+            await page.waitForTimeout(1000 + Math.random() * 2000);
 
-        const feedUrl = page.url();
-        console.log(`  Current URL: ${feedUrl} (status: ${feedResponse?.status()})`);
-
-        if (feedUrl.includes('login') || feedUrl.includes('authwall') || feedUrl.includes('signup')) {
-            console.error('❌ Cookie is invalid — redirected to login');
-            const screenshot = await page.screenshot();
-            await Actor.setValue('debug-login.png', screenshot, { contentType: 'image/png' });
-            
-            // Check if cookie was killed
-            const cookies = await context.cookies('https://www.linkedin.com');
-            const liAt = cookies.find(c => c.name === 'li_at');
-            console.error(`  li_at cookie value: ${liAt?.value?.substring(0, 20)}...`);
-            
-            for (const url of urls) {
-                await Actor.pushData({
-                    url,
-                    success: false,
-                    error: 'li_at cookie is invalid or expired — redirected to login',
-                    cookieStatus: liAt?.value?.includes('delete') ? 'KILLED' : 'present',
-                    fetchedAt: new Date().toISOString(),
-                });
+            // Type email with human-like delays
+            const emailInput = page.locator('#username');
+            await emailInput.click();
+            await page.waitForTimeout(300);
+            for (const char of email) {
+                await emailInput.type(char, { delay: 50 + Math.random() * 100 });
             }
-            await browser.close();
-            return;
+
+            await page.waitForTimeout(500 + Math.random() * 500);
+
+            // Type password
+            const passwordInput = page.locator('#password');
+            await passwordInput.click();
+            await page.waitForTimeout(300);
+            for (const char of password) {
+                await passwordInput.type(char, { delay: 50 + Math.random() * 100 });
+            }
+
+            await page.waitForTimeout(500 + Math.random() * 1000);
+            await page.locator('button[type="submit"]').click();
+
+            await page.waitForTimeout(3000);
+            await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+
+            const loginUrl = page.url();
+            console.log(`  Post-login URL: ${loginUrl}`);
+
+            if (loginUrl.includes('checkpoint') || loginUrl.includes('challenge')) {
+                console.error('❌ LinkedIn requires verification (CAPTCHA/OTP)');
+                const screenshot = await page.screenshot({ fullPage: true });
+                await Actor.setValue('debug-challenge.png', screenshot, { contentType: 'image/png' });
+                for (const url of urls) {
+                    await Actor.pushData({ url, success: false, error: 'Verification challenge required', fetchedAt: new Date().toISOString() });
+                }
+                await browser.close();
+                return;
+            }
+
+            if (loginUrl.includes('feed')) {
+                console.log('✅ Login successful! On feed.');
+            } else {
+                console.log(`⚠️ Unexpected post-login URL: ${loginUrl}`);
+                const screenshot = await page.screenshot();
+                await Actor.setValue('debug-login-result.png', screenshot, { contentType: 'image/png' });
+            }
+
+        } else {
+            // Cookie-based auth
+            console.log('🔐 Using li_at cookie...');
+            await context.addCookies([
+                { name: 'li_at', value: li_at, domain: '.linkedin.com', path: '/', httpOnly: true, secure: true, sameSite: 'None' },
+                { name: 'JSESSIONID', value: jsessionid || `"ajax:${Date.now()}"`, domain: '.linkedin.com', path: '/', httpOnly: false, secure: true, sameSite: 'None' },
+                { name: 'lang', value: 'v=2&lang=en-us', domain: '.linkedin.com', path: '/', secure: true, sameSite: 'None' },
+            ]);
+
+            console.log('📄 Loading LinkedIn feed...');
+            await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'networkidle', timeout: 45000 });
+
+            const feedUrl = page.url();
+            console.log(`  Feed URL: ${feedUrl}`);
+
+            if (feedUrl.includes('login') || feedUrl.includes('authwall') || feedUrl.includes('signup')) {
+                console.error('❌ Cookie invalid — redirected to login');
+                const screenshot = await page.screenshot();
+                await Actor.setValue('debug-login.png', screenshot, { contentType: 'image/png' });
+                for (const url of urls) {
+                    await Actor.pushData({ url, success: false, error: 'Cookie invalid — redirected to login', fetchedAt: new Date().toISOString() });
+                }
+                await browser.close();
+                return;
+            }
         }
 
-        console.log('✅ Session established! On feed page.');
-        
-        // Debug: save feed screenshot + HTML size
+        // Debug: save feed state
         const feedHtml = await page.content();
         console.log(`  Feed HTML size: ${feedHtml.length} bytes`);
         const feedScreenshot = await page.screenshot({ fullPage: false });
         await Actor.setValue('debug-feed.png', feedScreenshot, { contentType: 'image/png' });
-        
+
         await page.waitForTimeout(2000 + Math.random() * 2000);
 
-        // Step 2: Navigate to each post
-        for (const url of urls) {
-            const activityId = extractActivityId(url);
-            const postUrl = toFeedUrl(url);
-            console.log(`\n📝 Step 2: Navigating to post: ${postUrl}`);
+        // ===== SCRAPE POSTS =====
+        for (let i = 0; i < urls.length; i++) {
+            const url = urls[i];
+            const activityId = extractActivityId(url) || 'unknown';
+            const targetUrl = toFeedUrl(url);
+            console.log(`\n📝 [${i + 1}/${urls.length}] Navigating to: ${targetUrl}`);
 
             try {
-                await page.goto(postUrl, {
-                    waitUntil: 'networkidle',
-                    timeout: 45000,
-                });
+                await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 45000 });
 
                 const currentUrl = page.url();
                 console.log(`  Current URL: ${currentUrl}`);
 
                 if (currentUrl.includes('login') || currentUrl.includes('authwall')) {
-                    console.error('  ❌ Redirected to login on post page');
-                    await Actor.pushData({
-                        url,
-                        success: false,
-                        error: 'Redirected to login when accessing post',
-                        fetchedAt: new Date().toISOString(),
-                    });
+                    console.error('  ❌ Redirected to login');
+                    await Actor.pushData({ url, success: false, error: 'Redirected to login on post page', fetchedAt: new Date().toISOString() });
                     continue;
                 }
 
-                // Wait for post content
+                // Wait for content
                 try {
                     await page.waitForSelector(
                         '.update-components-text, .feed-shared-text__text-view, .feed-shared-update-v2__description, .break-words, [data-urn], .scaffold-finite-scroll',
                         { timeout: 20000 }
                     );
                 } catch {
-                    console.log('  ⚠️ Post text selector not found, extracting anyway...');
+                    console.log('  ⚠️ Content selector not found');
                 }
 
                 await page.waitForTimeout(3000);
@@ -354,34 +260,25 @@ Actor.main(async () => {
                 if (result.success) {
                     console.log(`  ✅ ${result.authorName}: ${result.postText.substring(0, 80)}...`);
                 } else {
-                    console.log('  ⚠️ Content extraction failed, saving debug data');
+                    console.log('  ⚠️ Extraction failed, saving debug data');
                     const screenshot = await page.screenshot({ fullPage: true });
                     await Actor.setValue(`debug-post-${activityId}.png`, screenshot, { contentType: 'image/png' });
                     const html = await page.content();
                     await Actor.setValue(`debug-post-${activityId}.html`, html, { contentType: 'text/html' });
-                    result.error = 'Post loaded but content extraction failed';
+                    console.log(`  Debug HTML size: ${html.length} bytes`);
+                    result.error = 'Content extraction failed — check debug files';
                     result.currentUrl = currentUrl;
                 }
 
                 await Actor.pushData(result);
             } catch (e) {
-                console.error(`  ❌ Failed: ${e.message}`);
+                console.error(`  ❌ Error: ${e.message}`);
                 const screenshot = await page.screenshot().catch(() => null);
-                if (screenshot) {
-                    await Actor.setValue(`debug-error-${activityId}.png`, screenshot, { contentType: 'image/png' });
-                }
-                await Actor.pushData({
-                    url,
-                    success: false,
-                    error: e.message,
-                    fetchedAt: new Date().toISOString(),
-                });
+                if (screenshot) await Actor.setValue(`debug-error-${activityId}.png`, screenshot, { contentType: 'image/png' });
+                await Actor.pushData({ url, success: false, error: e.message, fetchedAt: new Date().toISOString() });
             }
 
-            // Delay between posts
-            if (urls.indexOf(url) < urls.length - 1) {
-                await page.waitForTimeout(2000 + Math.random() * 3000);
-            }
+            if (i < urls.length - 1) await page.waitForTimeout(2000 + Math.random() * 3000);
         }
     } finally {
         await browser.close();
