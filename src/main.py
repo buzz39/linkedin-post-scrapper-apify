@@ -206,12 +206,24 @@ async def main():
             # Strip quotes if present
             jsessionid_clean = jsessionid.strip('"')
             
-            cookies = {'li_at': li_at, 'JSESSIONID': f'"{jsessionid_clean}"'}
-            api = Linkedin('', '', authenticate=False, cookies=cookies)
+            # Build raw session (bypass linkedin-api library for cookie auth)
+            import requests as req
+            raw_session = req.Session()
+            raw_session.cookies.set('li_at', li_at, domain='.linkedin.com')
+            raw_session.cookies.set('JSESSIONID', f'"{jsessionid_clean}"', domain='.linkedin.com')
+            raw_session.headers.update({
+                'csrf-token': jsessionid_clean,
+                'x-restli-protocol-version': '2.0.0',
+                'accept': 'application/vnd.linkedin.normalized+json+2.1',
+                'x-li-lang': 'en_US',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            })
             
-            # Set csrf-token header (critical for Voyager API)
-            api.client.session.headers['csrf-token'] = jsessionid_clean
-            api.client.session.headers['x-restli-protocol-version'] = '2.0.0'
+            # Create a simple wrapper to match the api.client.session interface
+            class SimpleAPI:
+                class client:
+                    session = raw_session
+            api = SimpleAPI()
             logger.info('✅ Cookie session created')
         else:
             raise ValueError('Provide email+password OR li_at cookie')
