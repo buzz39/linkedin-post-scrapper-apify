@@ -28,8 +28,10 @@ def extract_activity_id(url: str) -> str | None:
     return None
 
 
-def parse_post_data(raw_update: dict, original_url: str = '') -> dict:
-    """Parse raw Voyager API response into clean post data."""
+def parse_post_data(raw_response: dict, original_url: str = '') -> dict:
+    """Parse raw Voyager API response into clean post data.
+    Handles both nested format and normalized (data + included) format.
+    """
     result = {
         'success': False,
         'url': original_url,
@@ -41,6 +43,7 @@ def parse_post_data(raw_update: dict, original_url: str = '') -> dict:
         'likeCount': 0,
         'commentCount': 0,
         'shareCount': 0,
+        'repostCount': 0,
         'images': [],
         'videoUrl': None,
         'articleTitle': '',
@@ -51,95 +54,115 @@ def parse_post_data(raw_update: dict, original_url: str = '') -> dict:
         'fetchedAt': datetime.utcnow().isoformat() + 'Z',
     }
 
-    # Navigate the nested structure
-    update_v2 = raw_update.get('value', {}).get('com.linkedin.voyager.feed.render.UpdateV2', {})
-    if not update_v2:
-        # Try flat structure (from feed/updates endpoint)
-        update_v2 = raw_update
-
-    # Activity URN
-    urn = raw_update.get('urn', '') or raw_update.get('entityUrn', '')
-    result['activityUrn'] = urn
-    if not original_url and urn:
-        result['url'] = f'https://www.linkedin.com/feed/update/{urn}'
-
-    # Actor (author)
-    actor = update_v2.get('actor', {})
-    if actor:
-        name = actor.get('name', {})
-        result['authorName'] = name.get('text', '') if isinstance(name, dict) else str(name)
+    # Check if normalized format (data + included)
+    if 'data' in raw_response and 'included' in raw_response:
+        data = raw_response['data']
+        included = raw_response['included']
         
-        desc = actor.get('description', {})
-        result['authorHeadline'] = desc.get('text', '') if isinstance(desc, dict) else str(desc)
+        # Build entity map
+        entity_map = {}
+        for item in included:
+            urn = item.get('entityUrn', '')
+            if urn:
+                entity_map[urn] = item
         
-        nav_url = actor.get('navigationUrl', '')
-        if nav_url:
-            result['authorProfileUrl'] = nav_url.split('?')[0]
-
-    # Commentary (post text)
-    commentary = update_v2.get('commentary', {})
-    if commentary:
-        text_obj = commentary.get('text', {})
-        result['postText'] = text_obj.get('text', '') if isinstance(text_obj, dict) else str(text_obj)
-
-    # Social details
-    social_detail = update_v2.get('socialDetail', {})
-    if social_detail:
-        total_social = social_detail.get('totalSocialActivityCounts', {})
-        result['likeCount'] = total_social.get('numLikes', 0) or total_social.get('reactionTypeCounts', [{}])
-        result['commentCount'] = total_social.get('numComments', 0)
-        result['shareCount'] = total_social.get('numShares', 0)
+        # Get activity URN
+        result['activityUrn'] = data.get('urn', '')
+        result['url'] = original_url or data.get('permalink', '')
         
-        # Handle reactionTypeCounts for like count
-        if isinstance(result['likeCount'], list):
-            result['likeCount'] = sum(r.get('count', 0) for r in result['likeCount'])
-
-    # Content (images, video, articles)
-    content = update_v2.get('content', {})
-    if content:
-        # Image
-        images_content = content.get('com.linkedin.voyager.feed.render.ImageComponent', {})
-        if images_content:
-            for img in images_content.get('images', []):
-                attrs = img.get('attributes', [])
-                for attr in attrs:
-                    vector_img = attr.get('vectorImage', {})
-                    artifacts = vector_img.get('artifacts', [])
-                    if artifacts:
-                        root_url = vector_img.get('rootUrl', '')
-                        # Get largest image
-                        largest = max(artifacts, key=lambda a: a.get('width', 0), default={})
-                        file_id = largest.get('fileIdentifyingUrlPathSegment', '')
-                        if root_url and file_id:
-                            result['images'].append(f'{root_url}{file_id}')
-            if result['images']:
-                result['type'] = 'image'
-
-        # Video
-        video_content = content.get('com.linkedin.voyager.feed.render.LinkedInVideoComponent', {})
-        if video_content:
-            result['type'] = 'video'
-            # Video URL may be in progressiveStreams
-            video_play = video_content.get('videoPlayMetadata', {})
-            streams = video_play.get('progressiveStreams', [])
-            if streams:
-                result['videoUrl'] = streams[0].get('streamingLocations', [{}])[0].get('url', '')
-
-        # Article
-        article_content = content.get('com.linkedin.voyager.feed.render.ArticleComponent', {})
-        if article_content:
-            result['type'] = 'article'
-            title = article_content.get('title', {})
-            result['articleTitle'] = title.get('text', '') if isinstance(title, dict) else str(title)
-            result['articleLink'] = article_content.get('navigationUrl', '')
+        # Find UpdateV2 entity
+        update_v2 = None
+        for item in included:
+            if item.get('$type') == 'com.linkedin.voyager.feed.render.UpdateV2':
+                update_v2 = item
+                break
+        
+        if update_v2:
+            # Post text from commentary
+            commentary = update_v2.get('commentary', {})
+            if commentary:
+                text_obj = commentary.get('text', {})
+                result['postText'] = text_obj.get('text', '') if isinstance(text_obj, dict) else str(text_obj)
+            
+            # Actor info
+            actor = update_v2.get('actor', {})
+            if actor:
+                name = actor.get('name', {})
+                result['authorName'] = name.get('text', '') if isinstance(name, dict) else str(name)
+                desc = actor.get('description', {})
+                result['authorHeadline'] = desc.get('text', '') if isinstance(desc, dict) else str(desc)
+                nav_url = actor.get('navigationUrl', '')
+                if nav_url:
+                    result['authorProfileUrl'] = nav_url.split('?')[0]
+        
+        # Find SocialActivityCounts for this post
+        for item in included:
+            if item.get('$type') == 'com.linkedin.voyager.feed.shared.SocialActivityCounts':
+                # Check if it belongs to our post
+                sd_urn = item.get('socialDetailEntityUrn', '')
+                if 'activity:' + result['activityUrn'].split(':')[-1] in sd_urn or not result['likeCount']:
+                    result['likeCount'] = item.get('numLikes', 0)
+                    result['commentCount'] = item.get('numComments', 0)
+                    result['shareCount'] = item.get('numShares', 0)
+                    result['repostCount'] = item.get('numShares', 0)
+                    # Only use the first match (usually the main post)
+                    if 'activity:' + result['activityUrn'].split(':')[-1] in sd_urn:
+                        break
+        
+        # Find images
+        for item in included:
+            if item.get('$type', '').endswith('MiniArticle'):
+                result['articleTitle'] = item.get('title', '')
+                result['type'] = 'article'
+            
+            # Check for video
+            if item.get('$type') == 'com.linkedin.videocontent.VideoPlayMetadata':
+                result['type'] = 'video'
+                streams = item.get('progressiveStreams', [])
+                if streams:
+                    locs = streams[0].get('streamingLocations', [])
+                    if locs:
+                        result['videoUrl'] = locs[0].get('url', '')
+    else:
+        # Legacy nested format
+        update_v2 = raw_response.get('value', {}).get('com.linkedin.voyager.feed.render.UpdateV2', raw_response)
+        
+        result['activityUrn'] = raw_response.get('urn', '') or raw_response.get('entityUrn', '')
+        if not original_url and result['activityUrn']:
+            result['url'] = f'https://www.linkedin.com/feed/update/{result["activityUrn"]}'
+        
+        actor = update_v2.get('actor', {})
+        if actor:
+            name = actor.get('name', {})
+            result['authorName'] = name.get('text', '') if isinstance(name, dict) else str(name)
+            desc = actor.get('description', {})
+            result['authorHeadline'] = desc.get('text', '') if isinstance(desc, dict) else str(desc)
+            nav_url = actor.get('navigationUrl', '')
+            if nav_url:
+                result['authorProfileUrl'] = nav_url.split('?')[0]
+        
+        commentary = update_v2.get('commentary', {})
+        if commentary:
+            text_obj = commentary.get('text', {})
+            result['postText'] = text_obj.get('text', '') if isinstance(text_obj, dict) else str(text_obj)
+        
+        social_detail = update_v2.get('socialDetail', {})
+        if social_detail:
+            total_social = social_detail.get('totalSocialActivityCounts', {})
+            result['likeCount'] = total_social.get('numLikes', 0)
+            result['commentCount'] = total_social.get('numComments', 0)
+            result['shareCount'] = total_social.get('numShares', 0)
 
     # Hashtags
     if result['postText']:
-        tags = re.findall(r'#[\w\u00C0-\u024F]+', result['postText'])
-        result['hashtags'] = tags
+        result['hashtags'] = re.findall(r'#[\w\u00C0-\u024F]+', result['postText'])
 
-    # Timestamp
-    result['timestamp'] = str(raw_update.get('createdTime', ''))
+    # Determine image type
+    if not result['type'] or result['type'] == 'text':
+        if result['images']:
+            result['type'] = 'image'
+        elif result['postText']:
+            result['type'] = 'text'
 
     result['success'] = bool(result['postText'] or result['authorName'])
     return result
