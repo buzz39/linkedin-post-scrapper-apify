@@ -1,5 +1,6 @@
 const { Actor } = require('apify');
-const { gotScraping } = require('got-scraping');
+const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const VOYAGER_BASE = 'https://www.linkedin.com/voyager/api';
 
@@ -49,19 +50,22 @@ async function voyagerGet(path, { li_at, jsessionid, proxyUrl }) {
     const csrfToken = jsessionid || `ajax:${Date.now()}`;
     const cookieStr = `li_at=${li_at}; JSESSIONID="${csrfToken}"`;
 
-    const response = await gotScraping({
+    const config = {
         url: `${VOYAGER_BASE}${path}`,
         headers: {
             ...HEADERS,
             'csrf-token': csrfToken,
             'cookie': cookieStr,
         },
-        proxyUrl,
-        responseType: 'json',
-        timeout: { request: 30000 },
-    });
+        timeout: 30000,
+    };
 
-    return response.body;
+    if (proxyUrl) {
+        config.httpsAgent = new HttpsProxyAgent(proxyUrl);
+    }
+
+    const response = await axios(config);
+    return response.data;
 }
 
 /**
