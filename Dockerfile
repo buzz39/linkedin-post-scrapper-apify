@@ -1,14 +1,8 @@
-FROM apify/actor-node-playwright-chrome:18
+# Dockerfile for LinkedIn Post Scraper (Python)
+FROM apify/actor-python:3.12
 
-COPY package*.json ./
-RUN npm --quiet set progress=false \
-    && npm install --omit=dev --omit=optional \
-    && echo "Installed NPM packages:" \
-    && (npm list --omit=dev --all || true) \
-    && echo "Node.js version:" \
-    && node --version \
-    && echo "NPM version:" \
-    && npm --version \
-    && rm -r ~/.npm
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . ./
-CMD npm start --silent
+CMD python -m src.main

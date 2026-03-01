@@ -1,32 +1,26 @@
 {
     "actorSpecification": 1,
     "name": "linkedin-post-scraper",
-    "title": "LinkedIn Post Scraper — No Cookies Needed",
-    "description": "Scrape LinkedIn profile posts at scale. Get full post text, author info, engagement stats (likes, comments, reposts), media, hashtags. No cookies or login required. Supports profile URLs, usernames, and individual post URLs.",
-    "version": "0.3",
+    "title": "LinkedIn Post Scraper",
+    "description": "Scrape LinkedIn posts with full text, author info, engagement stats (likes, comments, reposts), media, hashtags. Supports email/password login or li_at cookie. Uses LinkedIn's mobile API for reliable authentication.",
+    "version": "1.0",
     "dockerfile": "../Dockerfile",
     "meta": {
-        "templateId": "js-playwright-chrome"
+        "templateId": "python-start"
     },
     "input": "./input_schema.json",
     "seoTitle": "LinkedIn Post Scraper API — Extract Posts & Engagement Data",
-    "seoDescription": "Scrape LinkedIn posts from any profile — full text, engagement stats, media, hashtags, author info. No cookies needed. Pay per use.",
+    "seoDescription": "Scrape LinkedIn posts — full text, engagement stats, media, hashtags, author info. Uses mobile API for reliable auth. Pay per use.",
     "categories": ["SOCIAL_MEDIA"],
     "keywords": [
         "linkedin",
         "linkedin scraper",
         "linkedin post scraper",
         "linkedin posts",
-        "linkedin profile posts",
         "linkedin data extraction",
         "linkedin api",
         "social media scraper",
         "linkedin engagement",
-        "linkedin content",
-        "lead generation",
-        "market research",
-        "competitor monitoring",
-        "no cookies",
-        "linkedin automation"
+        "linkedin content"
     ]
 }

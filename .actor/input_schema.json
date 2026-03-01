@@ -1,78 +1,43 @@
 {
-  "title": "LinkedIn Post Scraper Input",
-  "type": "object",
-  "schemaVersion": 1,
-  "properties": {
-    "profileUrl": {
-      "title": "Profile URL or Username",
-      "type": "string",
-      "description": "LinkedIn profile URL (e.g. https://www.linkedin.com/in/satyanadella) or just the username",
-      "editor": "textfield",
-      "example": "https://www.linkedin.com/in/satyanadella"
+    "title": "LinkedIn Post Scraper Input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "email": {
+            "title": "LinkedIn Email",
+            "type": "string",
+            "description": "Email for LinkedIn login (recommended)",
+            "editor": "textfield"
+        },
+        "password": {
+            "title": "LinkedIn Password",
+            "type": "string",
+            "description": "Password for LinkedIn login",
+            "editor": "textfield",
+            "isSecret": true
+        },
+        "li_at": {
+            "title": "li_at Cookie (alternative)",
+            "type": "string",
+            "description": "li_at session cookie (alternative to email/password)",
+            "editor": "textfield",
+            "isSecret": true
+        },
+        "postUrl": {
+            "title": "Post URL",
+            "type": "string",
+            "description": "LinkedIn post URL to scrape",
+            "editor": "textfield"
+        },
+        "postUrls": {
+            "title": "Post URLs",
+            "type": "array",
+            "description": "Multiple LinkedIn post URLs to scrape",
+            "editor": "json",
+            "items": {
+                "type": "string"
+            }
+        }
     },
-    "postUrl": {
-      "title": "Single Post URL",
-      "type": "string",
-      "description": "Single LinkedIn post URL to fetch",
-      "editor": "textfield"
-    },
-    "postUrls": {
-      "title": "Post URLs (Batch)",
-      "type": "array",
-      "editor": "stringList",
-      "items": {
-        "type": "string"
-      },
-      "description": "Array of LinkedIn post URLs to fetch in batch"
-    },
-    "count": {
-      "title": "Number of Posts",
-      "type": "integer",
-      "description": "Number of posts to fetch from a profile",
-      "default": 10,
-      "minimum": 1,
-      "maximum": 100
-    },
-    "apiKey": {
-      "title": "API Key",
-      "type": "string",
-      "description": "Backend API key (optional, uses default if not provided)",
-      "editor": "textfield",
-      "isSecret": true
-    },
-    "li_at": {
-      "title": "LinkedIn li_at Cookie",
-      "type": "string",
-      "description": "Your LinkedIn li_at session cookie (required). Get from DevTools \u2192 Application \u2192 Cookies \u2192 linkedin.com \u2192 li_at",
-      "editor": "textfield",
-      "isSecret": true
-    },
-    "jsessionid": {
-      "title": "LinkedIn JSESSIONID",
-      "type": "string",
-      "description": "Your LinkedIn JSESSIONID cookie (optional but recommended)",
-      "editor": "textfield",
-      "isSecret": true
-    },
-    "email": {
-      "title": "LinkedIn Email",
-      "type": "string",
-      "description": "Email for login (alternative to li_at cookie)",
-      "editor": "textfield"
-    },
-    "password": {
-      "title": "LinkedIn Password",
-      "type": "string",
-      "description": "Password for login",
-      "editor": "textfield",
-      "isSecret": true
-    },
-    "otp": {
-      "title": "OTP Verification Code",
-      "type": "string",
-      "description": "Email verification code from LinkedIn (if challenge triggered)",
-      "editor": "textfield"
-    }
-  },
-  "required": []
+    "required": []
 }
